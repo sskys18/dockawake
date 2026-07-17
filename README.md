@@ -34,14 +34,14 @@ The installer:
 2. Installs the app to `~/Applications/DockAwake.app`
 3. Installs the helper to `/Library/PrivilegedHelperTools/dockawake-pmset` (root:wheel)
 4. Adds a narrow NOPASSWD sudoers rule at `/etc/sudoers.d/dockawake`
-5. Launches the app
+5. Launches the app (it registers itself as a login item, shown as "DockAwake" in System Settings > General > Login Items > Open at Login)
 
 Administrator authentication is required once, during installation only.
 
 ## Usage
 
 - **Left-click** the menu bar icon: toggle keep-awake ON/OFF
-- **Right-click**: menu with explicit toggle, current status, and Quit
+- **Right-click**: menu with explicit toggle, current status, a "Start at Login" checkbox, and Quit
 - Quitting the app always restores normal sleep
 
 When keeping the Mac awake with the lid closed, use a stable power source and ensure airflow. Closed-lid operation increases heat and battery consumption.

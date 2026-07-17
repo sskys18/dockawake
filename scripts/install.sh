@@ -31,6 +31,9 @@ visudo -c -f "$SUDOERS_TMP" >/dev/null
 sudo install -o root -g wheel -m 440 "$SUDOERS_TMP" "$SUDOERS_DST"
 rm -f "$SUDOERS_TMP"
 
+# Login item registration is handled natively by the app itself
+# (SMAppService, shows as "DockAwake" in System Settings > Login Items).
+
 echo "==> Verifying passwordless helper access"
 sudo -n "$HELPER_DST" off
 pmset -g | grep SleepDisabled

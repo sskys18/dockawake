@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 // DockAwake: menu bar toggle for closed-lid keep-awake.
 // Left-click the menu bar icon to toggle. Right-click for a menu.
@@ -25,6 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Adopt whatever the system state currently is (e.g. after a crash).
         awake = Self.readSleepDisabled()
         updateStatusIcon()
+
+        // Register as a native login item (shows as "DockAwake" in
+        // System Settings > General > Login Items). Idempotent.
+        if SMAppService.mainApp.status != .enabled {
+            try? SMAppService.mainApp.register()
+        }
 
         verifyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.verifyState()
@@ -62,6 +69,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stateItem.isEnabled = false
         menu.addItem(stateItem)
         menu.addItem(.separator())
+        let loginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(loginItem)
+        menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit DockAwake", action: #selector(quitAction), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -73,6 +85,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleAction() { toggle() }
     @objc private func quitAction() { NSApp.terminate(nil) }
+    @objc private func toggleLoginItem() {
+        if SMAppService.mainApp.status == .enabled {
+            try? SMAppService.mainApp.unregister()
+        } else {
+            try? SMAppService.mainApp.register()
+        }
+    }
+
 
     private func toggle() {
         setAwake(!awake)
@@ -178,6 +198,23 @@ extension NSImage {
         }
         return image
     }
+}
+
+// CLI escape hatch for scripts (used by uninstall.sh).
+if CommandLine.arguments.contains("--unregister-login-item") {
+    try? SMAppService.mainApp.unregister()
+    exit(0)
+}
+if CommandLine.arguments.contains("--login-item-status") {
+    let s = SMAppService.mainApp.status
+    switch s {
+    case .enabled: print("enabled")
+    case .notRegistered: print("notRegistered")
+    case .requiresApproval: print("requiresApproval")
+    case .notFound: print("notFound")
+    @unknown default: print("unknown(\(s.rawValue))")
+    }
+    exit(0)
 }
 
 let app = NSApplication.shared
