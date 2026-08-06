@@ -13,6 +13,8 @@ final class ProcessCollector {
         var sampledAt: TimeInterval
     }
 
+    static let minimumSampleInterval: TimeInterval = 0.25
+
     private let runner: CommandRunning
     private var rows: [ProcessIdentity: StoredRow] = [:]
     private let processorCount = max(1, ProcessInfo.processInfo.activeProcessorCount)
@@ -61,7 +63,10 @@ final class ProcessCollector {
             }
             guard confirmedIdentity == identity else { continue }
             let cpu: Availability<Double>
-            if let total = sample.totalCPUTime, let priorTotal = prior?.totalCPUTime, now > prior!.sampledAt, total >= priorTotal {
+            // Too short a window turns rounding noise into headline percentages,
+            // so a delta is only reported once it covers a measurable interval.
+            if let total = sample.totalCPUTime, let priorTotal = prior?.totalCPUTime,
+               now - prior!.sampledAt >= Self.minimumSampleInterval, total >= priorTotal {
                 let nanoseconds = Double(total - priorTotal) * machTicksToNanoseconds
                 cpu = .available(nanoseconds / (now - prior!.sampledAt) / 10_000_000)
             } else {

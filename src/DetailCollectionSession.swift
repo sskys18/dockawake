@@ -49,8 +49,11 @@ final class DetailCollectionSession {
             }
             self.logger.info("detail session \(self.generation, privacy: .public) start requested")
             self.state = .running
+            // The immediate pass has no prior sample, so its only job is to fill the
+            // panel and set the CPU baseline. The second pass follows one second
+            // later so real CPU appears almost at once instead of five seconds in.
             self.immediateTask = self.scheduler.scheduleImmediately { [weak self] in self?.refreshFromScheduler() }
-            self.repeatingTask = self.scheduler.schedule(after: 5, repeating: 5) { [weak self] in self?.refreshFromScheduler() }
+            self.repeatingTask = self.scheduler.schedule(after: 1, repeating: 5) { [weak self] in self?.refreshFromScheduler() }
             self.lifecycleLock.unlock()
             self.startPublicIPRequest()
         }

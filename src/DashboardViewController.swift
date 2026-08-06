@@ -584,7 +584,11 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             let rightUnavailable = isUnavailable(right, column: index)
             if leftUnavailable != rightUnavailable { return !leftUnavailable }
             let order = compare(left, right, column: index)
-            if order == .orderedSame { return left.id < right.id }
+            if order == .orderedSame {
+                let byMemory = compare(left.memoryBytes, right.memoryBytes)
+                if byMemory != .orderedSame { return byMemory == .orderedDescending }
+                return left.id < right.id
+            }
             return processSort.ascending ? order == .orderedAscending : order == .orderedDescending
         }
     }

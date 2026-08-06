@@ -210,6 +210,43 @@ final class CoreBehaviorTests: XCTestCase {
         wait(for: [scheduled, published], timeout: 0.2)
         XCTAssertTrue(scheduler.delays.isEmpty)
     }
+
+    func testDetailSessionSchedulesTheSecondPassOneSecondAfterTheFirst() {
+        let scheduled = expectation(description: "repeating pass scheduled")
+        let scheduler = RecordingScheduler { scheduled.fulfill() }
+        let session = DetailCollectionSession(
+            generation: 1,
+            scheduler: scheduler,
+            networkCollector: NetworkCollector(),
+            publicIPClient: PublicIPClient(),
+            processCollector: ProcessCollector(),
+            powerAssertionCollector: PowerAssertionCollector(),
+            containerCollector: ContainerCollector(runner: RecordingRunner(results: []), isExecutable: { _ in false })
+        ) { _ in }
+
+        session.start()
+
+        wait(for: [scheduled], timeout: 2)
+        // The immediate pass only sets the CPU baseline, so the next one has to
+        // arrive quickly or the panel shows N/A for a full refresh interval.
+        XCTAssertEqual(scheduler.delays, [1])
+        session.stop()
+    }
+
+    func testProcessCPUNeedsAMeasurableWindowBeforeItIsReported() {
+        // A baseline taken microseconds ago cannot produce a meaningful percentage.
+        XCTAssertGreaterThan(ProcessCollector.minimumSampleInterval, 0)
+
+        let collector = ProcessCollector()
+        let first = collector.collect()
+        XCTAssertFalse(first.isEmpty)
+        XCTAssertTrue(first.allSatisfy { $0.cpuPercent.value == nil })
+
+        Thread.sleep(forTimeInterval: ProcessCollector.minimumSampleInterval + 0.1)
+        let second = collector.collect()
+        XCTAssertTrue(second.contains { $0.cpuPercent.value != nil })
+    }
+
     func testKeepAwakeUnknownReadIsNeverReportedDisabled() {
         let published = expectation(description: "unknown state published")
         let scheduled = expectation(description: "periodic verification scheduled")
