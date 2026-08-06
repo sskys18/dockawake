@@ -1,0 +1,427 @@
+import Foundation
+import AppKit
+import XCTest
+@testable import DockAwakeCore
+
+final class CoreBehaviorTests: XCTestCase {
+    func testFormattingClampsPercentAndRendersAddresses() {
+        XCTAssertEqual(DashboardFormat.percent(-0.1), "0.0%")
+        XCTAssertEqual(DashboardFormat.percent(42.4), "42.4%")
+        XCTAssertEqual(DashboardFormat.percent(100.1), "100.0%")
+        XCTAssertEqual(DashboardFormat.processPercent(245.6), "245.6%")
+        XCTAssertEqual(DashboardFormat.address("192.0.2.1", port: 443), "192.0.2.1:443")
+        XCTAssertEqual(DashboardFormat.address("2001:db8::1", port: 443), "[2001:db8::1]:443")
+    }
+
+    func testAvailabilityAndNetworkDisplayDistinguishUnknownFromUnavailable() {
+        XCTAssertNil(Availability<Int>.unknown.value)
+        XCTAssertNil(Availability<Int>.unavailable.value)
+        XCTAssertEqual(Availability.available(7).value, 7)
+        XCTAssertEqual(DashboardFormat.text(Availability<Double>.unknown, formatter: DashboardFormat.percent), "Unknown")
+        XCTAssertEqual(DashboardFormat.text(Availability<Double>.unavailable, formatter: DashboardFormat.percent), "N/A")
+
+        let interface = NetworkInterfaceSnapshot(
+            name: "en0",
+            flags: 0,
+            addresses: [],
+            linkSpeedBitsPerSecond: .unavailable,
+            receivedBytes: .unknown,
+            sentBytes: .unknown,
+            receivedRateBytesPerSecond: .unknown,
+            sentRateBytesPerSecond: .unavailable
+        )
+        XCTAssertEqual(interface.addressesText, "N/A")
+        XCTAssertEqual(interface.linkSpeedText, "N/A")
+        XCTAssertEqual(interface.receivedRateText, "Unknown")
+        XCTAssertEqual(interface.sentRateText, "N/A")
+    }
+
+    func testProcessIdentityOrdersPidThenStartTime() {
+        let identities = [
+            ProcessIdentity(pid: 12, startSeconds: 1, startMicroseconds: 0),
+            ProcessIdentity(pid: 4, startSeconds: 20, startMicroseconds: 3),
+            ProcessIdentity(pid: 4, startSeconds: 20, startMicroseconds: 1),
+            ProcessIdentity(pid: 4, startSeconds: 19, startMicroseconds: 99)
+        ]
+
+        XCTAssertEqual(identities.sorted(), [
+            ProcessIdentity(pid: 4, startSeconds: 19, startMicroseconds: 99),
+            ProcessIdentity(pid: 4, startSeconds: 20, startMicroseconds: 1),
+            ProcessIdentity(pid: 4, startSeconds: 20, startMicroseconds: 3),
+            ProcessIdentity(pid: 12, startSeconds: 1, startMicroseconds: 0)
+        ])
+    }
+
+    func testListeningPortIdentityAndDisplayIncludeIPv6Brackets() {
+        let port = ListeningPort(protocolName: "tcp", address: "2001:db8::2", port: 8080, fileDescriptor: 6)
+        XCTAssertEqual(port.id, "tcp:2001:db8::2:8080:6")
+        XCTAssertEqual(port.displayText, "tcp [2001:db8::2]:8080")
+    }
+
+    func testPublicIPEndpointIsTheFixedSecureIpifyJSONEndpoint() {
+        let endpoint = PublicIPClient.endpoint
+        XCTAssertEqual(endpoint.scheme, "https")
+        XCTAssertEqual(endpoint.host, "api.ipify.org")
+        XCTAssertEqual(endpoint.absoluteString, "https://api.ipify.org?format=json")
+        XCTAssertEqual(endpoint.query, "format=json")
+    }
+
+    func testPublicIPRequestCompletesOnceWithoutUnknownResult() {
+        let completed = expectation(description: "public IP request completes")
+        completed.assertForOverFulfill = true
+        let request = PublicIPClient().makeRequest { result in
+            XCTAssertNotEqual(result, .unknown)
+            completed.fulfill()
+        }
+
+        request.start()
+
+        wait(for: [completed], timeout: 7)
+    }
+    func testSchedulerImmediatelyExecutesHandlerWithoutSleeping() {
+        let executed = expectation(description: "scheduled handler executes")
+        let scheduler = DispatchScheduler(queue: DispatchQueue(label: "DockAwakeCoreTests.scheduler"))
+
+        _ = scheduler.scheduleImmediately {
+            executed.fulfill()
+        }
+
+        wait(for: [executed], timeout: 1)
+    }
+    func testStatusStripBuildsExactlyFourIconValuePairs() {
+        let strip = StatusStripView()
+        var attachmentCount = 0
+        strip.attributedTitle.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: strip.attributedTitle.length)
+        ) { value, _, _ in
+            if value != nil { attachmentCount += 1 }
+        }
+        XCTAssertEqual(attachmentCount, 4)
+
+        strip.update(with: SystemSummarySnapshot(
+            timestamp: Date(),
+            cpu: .available(MetricDisplay(value: 10, text: "10%")),
+            memory: .available(MetricDisplay(value: 20, text: "20%")),
+            storage: .available(MetricDisplay(value: 30, text: "30%")),
+            battery: .available(MetricDisplay(value: 40, text: "40%"))
+        ))
+        let rendered = strip.attributedTitle.string
+        for value in ["10%", "20%", "30%", "40%"] {
+            XCTAssertTrue(rendered.contains(value))
+        }
+    }
+    func testPowerAssertionsUseOwningPidKeys() {
+        switch PowerAssertionCollector().collect() {
+        case let .available(rows):
+            for row in rows {
+                XCTAssertNotNil(row.ownerPID)
+                XCTAssertFalse(row.type.isEmpty)
+            }
+        case .unavailable, .unknown:
+            XCTFail("IOKit assertion inventory should be available on supported macOS")
+        }
+    }
+    func testLiveSummaryMetricsStayWithinPercentageBounds() {
+        let result = SystemSummaryCollector().collect(previousCPU: nil)
+        for metric in [result.snapshot.memory, result.snapshot.storage] {
+            guard case let .available(display) = metric else {
+                return XCTFail("Expected a local summary metric")
+            }
+            XCTAssertGreaterThanOrEqual(display.value, 0)
+            XCTAssertLessThanOrEqual(display.value, 100)
+        }
+        XCTAssertEqual(result.snapshot.cpu, .unavailable)
+    }
+
+    func testLiveProcessCollectionUsesUniqueStartIdentities() {
+        let rows = ProcessCollector().collect()
+        XCTAssertFalse(rows.isEmpty)
+        XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)
+        for row in rows {
+            XCTAssertGreaterThan(row.id.pid, 0)
+        }
+    }
+
+    // A MAXCOMLEN-sized buffer makes libproc reject every proc_name call, which
+    // silently rendered the whole table as "Unknown".
+    func testProcessRowsResolveRealNames() {
+        let rows = ProcessCollector().collect()
+        let mine = rows.first { $0.id.pid == getpid() }
+
+        XCTAssertNotNil(mine)
+        XCTAssertNotEqual(mine?.name, "Unknown")
+        XCTAssertFalse(mine?.name.isEmpty ?? true)
+        XCTAssertLessThan(rows.filter { $0.name == "Unknown" }.count, rows.count / 2)
+    }
+
+    // libproc task times are mach units, not nanoseconds. Without the timebase
+    // conversion a fully busy core reported roughly 1/42 of its real usage.
+    func testProcessCPUUsesMachTimebaseSoBusyWorkIsNotUnderReported() {
+        let collector = ProcessCollector()
+        _ = collector.collect()
+
+        let deadline = Date().addingTimeInterval(0.6)
+        var sink = 0.0
+        while Date() < deadline { sink += 1 }
+        XCTAssertGreaterThan(sink, 0)
+
+        let mine = collector.collect().first { $0.id.pid == getpid() }
+        guard case let .available(percent)? = mine?.cpuPercent else {
+            return XCTFail("Expected a CPU sample for the test process")
+        }
+        XCTAssertGreaterThan(percent, 40)
+    }
+    func testCommandRunnerTimeoutIsBounded() {
+        let started = ProcessInfo.processInfo.systemUptime
+        let result = CommandRunner().run(
+            executable: "/bin/sleep",
+            arguments: ["10"],
+            outputLimit: 1024,
+            timeout: 0.1)
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+
+        XCTAssertTrue(result.timedOut)
+        XCTAssertLessThan(elapsed, 3)
+    }
+    func testDetailSessionStoppedBeforeStartSchedulesNoWork() {
+        let scheduled = expectation(description: "no detail schedule")
+        scheduled.isInverted = true
+        let published = expectation(description: "no detail publication")
+        published.isInverted = true
+        let scheduler = RecordingScheduler {
+            scheduled.fulfill()
+        }
+        let session = DetailCollectionSession(
+            generation: 1,
+            scheduler: scheduler,
+            networkCollector: NetworkCollector(),
+            publicIPClient: PublicIPClient(),
+            processCollector: ProcessCollector(),
+            powerAssertionCollector: PowerAssertionCollector(),
+            containerCollector: ContainerCollector(runner: RecordingRunner(results: []), isExecutable: { _ in false })
+        ) { _ in
+            published.fulfill()
+        }
+
+        session.stop()
+        session.start()
+
+        wait(for: [scheduled, published], timeout: 0.2)
+        XCTAssertTrue(scheduler.delays.isEmpty)
+    }
+    func testKeepAwakeUnknownReadIsNeverReportedDisabled() {
+        let published = expectation(description: "unknown state published")
+        let scheduled = expectation(description: "periodic verification scheduled")
+        let runner = RecordingRunner(results: [
+            CommandResult(status: 1, output: Data(), timedOut: false, exceededOutputLimit: false)
+        ])
+        let scheduler = RecordingScheduler {
+            scheduled.fulfill()
+        }
+        let controller = KeepAwakeController(runner: runner, scheduler: scheduler) { state in
+            XCTAssertEqual(state.current, .unknown)
+            XCTAssertNil(state.lastKnown)
+            published.fulfill()
+        }
+
+        controller.adoptCurrentState()
+
+        wait(for: [published, scheduled], timeout: 2)
+        XCTAssertEqual(runner.calls, [
+            RecordingRunner.Call(executable: "/usr/bin/pmset", arguments: ["-g"])
+        ])
+        XCTAssertEqual(scheduler.delays, [10])
+    }
+
+    func testKeepAwakeUsesExactCommandsAndFiveSecondRetry() {
+        let published = expectation(description: "pending and failed states published")
+        published.expectedFulfillmentCount = 2
+        let runner = RecordingRunner(results: [
+            CommandResult(status: 1, output: Data(), timedOut: false, exceededOutputLimit: false),
+            CommandResult(status: 0, output: Data(" SleepDisabled 0\n".utf8), timedOut: false, exceededOutputLimit: false)
+        ])
+        let scheduler = RecordingScheduler()
+        let controller = KeepAwakeController(runner: runner, scheduler: scheduler) { _ in
+            published.fulfill()
+        }
+
+        controller.setDesired(true)
+
+        wait(for: [published], timeout: 2)
+        XCTAssertEqual(runner.calls, [
+            RecordingRunner.Call(
+                executable: "/usr/bin/sudo",
+                arguments: ["-n", "/Library/PrivilegedHelperTools/dockawake-pmset", "on"]),
+            RecordingRunner.Call(executable: "/usr/bin/pmset", arguments: ["-g"])
+        ])
+        XCTAssertEqual(scheduler.delays, [5])
+    }
+
+    func testShutdownOrdersFinalOffAsLastHelperMutation() {
+        let runner = RecordingRunner(results: [
+            CommandResult(status: 0, output: Data(), timedOut: false, exceededOutputLimit: false),
+            CommandResult(status: 0, output: Data(" SleepDisabled 0\n".utf8), timedOut: false, exceededOutputLimit: false)
+        ])
+        let controller = KeepAwakeController(runner: runner, scheduler: RecordingScheduler()) { _ in }
+
+        controller.shutdownAndRestoreSleep()
+
+        XCTAssertEqual(runner.calls.last, RecordingRunner.Call(
+            executable: "/usr/bin/pmset",
+            arguments: ["-g"]))
+        XCTAssertEqual(runner.calls.dropLast().last, RecordingRunner.Call(
+            executable: "/usr/bin/sudo",
+            arguments: ["-n", "/Library/PrivilegedHelperTools/dockawake-pmset", "off"]))
+        XCTAssertFalse(runner.calls.contains {
+            $0.executable == "/usr/bin/sudo" && $0.arguments.last == "on"
+        })
+    }
+
+    // MARK: - Containers
+
+    func testContainerParsingKeepsRunningFirstAndNormalizesEmptyFields() {
+        let output = """
+        {"ID":"aaa111","Names":"pc-settlement-pg","Image":"postgres:16","State":"exited","Status":"Exited (255) 2 days ago","Ports":""}
+        {"ID":"bbb222","Names":"zeroradar-redis","Image":"redis:7","State":"RUNNING","Status":"Up 20 hours","Ports":"0.0.0.0:6379->6379/tcp"}
+        not json at all
+        {"Names":"missing-id","State":"running"}
+        """
+        let rows = ContainerCollector.parse(Data(output.utf8))
+
+        XCTAssertEqual(rows.map(\.name), ["zeroradar-redis", "pc-settlement-pg"])
+        XCTAssertTrue(rows[0].isRunning)
+        XCTAssertEqual(rows[0].portsText, "0.0.0.0:6379->6379/tcp")
+        XCTAssertFalse(rows[1].isRunning)
+        XCTAssertEqual(rows[1].portsText, "None")
+    }
+
+    func testContainerRowShortIDAndFallbackName() {
+        let row = ContainerRow(
+            id: "0123456789abcdef0123",
+            name: "",
+            image: "redis:7",
+            state: "",
+            status: "Created",
+            ports: "")
+        XCTAssertEqual(row.shortID, "0123456789ab")
+        XCTAssertEqual(row.displayName, "0123456789ab")
+        XCTAssertEqual(row.stateText, "Unknown")
+        XCTAssertFalse(row.isRunning)
+    }
+
+    func testRuntimeStatusDistinguishesMissingCLIFromEmptyContainerList() {
+        XCTAssertEqual(ContainerRuntimeStatus.missingCLI.summaryText, "No docker CLI found")
+        XCTAssertEqual(ContainerRuntimeStatus.daemonUnreachable.summaryText, "Runtime not running")
+        XCTAssertEqual(ContainerRuntimeStatus.available([]).summaryText, "0 running · 0 total")
+        XCTAssertTrue(ContainerRuntimeStatus.missingCLI.rows.isEmpty)
+    }
+
+    func testContainerCollectorReportsMissingCLIWithoutRunningAnything() {
+        let runner = RecordingRunner(results: [])
+        let collector = ContainerCollector(runner: runner, isExecutable: { _ in false })
+
+        XCTAssertEqual(collector.collect(), .missingCLI)
+        XCTAssertFalse(collector.stop(containerID: "aaa111"))
+        XCTAssertTrue(runner.calls.isEmpty)
+    }
+
+    func testContainerCollectorReportsDaemonUnreachableOnNonZeroExit() {
+        let runner = RecordingRunner(results: [
+            CommandResult(status: 1, output: Data(), timedOut: false, exceededOutputLimit: false)
+        ])
+        let collector = ContainerCollector(runner: runner, isExecutable: { $0 == "/opt/homebrew/bin/docker" })
+
+        XCTAssertEqual(collector.collect(), .daemonUnreachable)
+        XCTAssertEqual(runner.calls.first, RecordingRunner.Call(
+            executable: "/opt/homebrew/bin/docker",
+            arguments: ["ps", "--all", "--no-trunc", "--format", "{{json .}}"]))
+    }
+
+    func testContainerStopUsesGracefulRuntimeStopAndRejectsEmptyID() {
+        let runner = RecordingRunner(results: [
+            CommandResult(status: 0, output: Data(), timedOut: false, exceededOutputLimit: false)
+        ])
+        let collector = ContainerCollector(runner: runner, isExecutable: { $0 == "/usr/local/bin/docker" })
+
+        XCTAssertFalse(collector.stop(containerID: ""))
+        XCTAssertTrue(runner.calls.isEmpty)
+        XCTAssertTrue(collector.stop(containerID: "aaa111"))
+        XCTAssertEqual(runner.calls, [RecordingRunner.Call(
+            executable: "/usr/local/bin/docker",
+            arguments: ["stop", "aaa111"])])
+    }
+
+    func testContainerStopFailsWhenTheRuntimeTimesOut() {
+        let runner = RecordingRunner(results: [
+            CommandResult(status: 0, output: Data(), timedOut: true, exceededOutputLimit: false)
+        ])
+        let collector = ContainerCollector(runner: runner, isExecutable: { _ in true })
+
+        XCTAssertFalse(collector.stop(containerID: "aaa111"))
+    }
+
+}
+
+private final class RecordingRunner: CommandRunning {
+    struct Call: Equatable {
+        let executable: String
+        let arguments: [String]
+    }
+
+    private let lock = NSLock()
+    private var results: [CommandResult]
+    private var recordedCalls: [Call] = []
+
+    init(results: [CommandResult]) {
+        self.results = results
+    }
+
+    var calls: [Call] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedCalls
+    }
+
+    func run(executable: String, arguments: [String], outputLimit: Int, timeout: TimeInterval) -> CommandResult {
+        lock.lock()
+        defer { lock.unlock() }
+        recordedCalls.append(Call(executable: executable, arguments: arguments))
+        guard !results.isEmpty else {
+            return CommandResult(status: nil, output: Data(), timedOut: false, exceededOutputLimit: false)
+        }
+        return results.removeFirst()
+    }
+}
+
+private final class RecordingScheduler: Scheduling {
+    private let lock = NSLock()
+    private var recordedDelays: [TimeInterval] = []
+    private let onSchedule: (() -> Void)?
+
+    init(onSchedule: (() -> Void)? = nil) {
+        self.onSchedule = onSchedule
+    }
+
+    var delays: [TimeInterval] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedDelays
+    }
+
+    func scheduleImmediately(_ handler: @escaping () -> Void) -> DashboardScheduledTask {
+        StubScheduledTask()
+    }
+
+    func schedule(after delay: TimeInterval, repeating interval: TimeInterval?, _ handler: @escaping () -> Void) -> DashboardScheduledTask {
+        lock.lock()
+        recordedDelays.append(delay)
+        lock.unlock()
+        onSchedule?()
+        return StubScheduledTask()
+    }
+}
+
+private final class StubScheduledTask: DashboardScheduledTask {
+    func cancel() {}
+}
