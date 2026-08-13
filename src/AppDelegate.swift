@@ -234,13 +234,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private static func summaryAccessibilityText(_ snapshot: SystemSummarySnapshot) -> String {
         let labels = ["CPU", "Memory", "Storage", "Battery"]
         let metrics = [snapshot.cpu, snapshot.memory, snapshot.storage, snapshot.battery]
-        return zip(labels, metrics).map { label, metric in
+        var parts = zip(labels, metrics).map { label, metric -> String in
             let value: String
             switch metric {
             case let .available(display): value = display.text
             case .unavailable, .unknown: value = "N/A"
             }
             return "\(label) \(value)"
-        }.joined(separator: ", ")
+        }
+        if let power = snapshot.batteryPower.value {
+            parts.append(power.text)
+        }
+        return parts.joined(separator: ", ")
     }
 }

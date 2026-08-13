@@ -33,12 +33,45 @@ struct MetricDisplay: Equatable {
     }
 }
 
+/// How the machine is currently powered, which changes the moment the charger
+/// is plugged or unplugged even though the charge percentage does not.
+enum BatteryPower: Equatable {
+    case charging
+    case pluggedNotCharging
+    case onBattery
+
+    var text: String {
+        switch self {
+        case .charging: return "Charging"
+        case .pluggedNotCharging: return "Plugged in"
+        case .onBattery: return "On battery"
+        }
+    }
+}
+
 struct SystemSummarySnapshot: Equatable {
     let timestamp: Date
     let cpu: Availability<MetricDisplay>
     let memory: Availability<MetricDisplay>
     let storage: Availability<MetricDisplay>
     let battery: Availability<MetricDisplay>
+    let batteryPower: Availability<BatteryPower>
+
+    init(
+        timestamp: Date,
+        cpu: Availability<MetricDisplay>,
+        memory: Availability<MetricDisplay>,
+        storage: Availability<MetricDisplay>,
+        battery: Availability<MetricDisplay>,
+        batteryPower: Availability<BatteryPower> = .unavailable
+    ) {
+        self.timestamp = timestamp
+        self.cpu = cpu
+        self.memory = memory
+        self.storage = storage
+        self.battery = battery
+        self.batteryPower = batteryPower
+    }
 }
 
 /// The immutable data required by the status strip and dashboard summary.

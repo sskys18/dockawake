@@ -111,6 +111,37 @@ final class CoreBehaviorTests: XCTestCase {
             XCTAssertTrue(rendered.contains(value))
         }
     }
+    func testStatusStripReflectsChargerStateWithoutPercentChange() {
+        let strip = StatusStripView()
+        func snapshot(_ power: BatteryPower) -> SystemSummarySnapshot {
+            SystemSummarySnapshot(
+                timestamp: Date(),
+                cpu: .available(MetricDisplay(value: 10, text: "10%")),
+                memory: .available(MetricDisplay(value: 20, text: "20%")),
+                storage: .available(MetricDisplay(value: 30, text: "30%")),
+                battery: .available(MetricDisplay(value: 40, text: "40%")),
+                batteryPower: .available(power))
+        }
+
+        strip.update(with: snapshot(.onBattery))
+        XCTAssertTrue(strip.labeledSummary.contains("Battery charge, on battery: 40%"))
+
+        strip.update(with: snapshot(.charging))
+        XCTAssertTrue(strip.labeledSummary.contains("Battery charge, charging: 40%"))
+
+        strip.update(with: snapshot(.pluggedNotCharging))
+        XCTAssertTrue(strip.labeledSummary.contains("Battery charge, plugged in: 40%"))
+    }
+
+    func testLiveBatteryReportsChargerState() {
+        let snapshot = SystemSummaryCollector().collect(previousCPU: nil).snapshot
+        guard case .available = snapshot.battery else { return }
+        guard case .available = snapshot.batteryPower else {
+            XCTFail("charger state must accompany an available battery charge")
+            return
+        }
+    }
+
     func testPowerAssertionsUseOwningPidKeys() {
         switch PowerAssertionCollector().collect() {
         case let .available(rows):

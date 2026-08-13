@@ -16,13 +16,15 @@ final class SystemSummaryCollector: SystemSummaryCollecting {
     func collect(previousCPU: CPUTickSnapshot?) -> (snapshot: DashboardSnapshot, cpu: CPUTickSnapshot?) {
         let cpuSample = readCPUTicks()
         let cpu = cpuMetric(current: cpuSample, previous: previousCPU)
+        let battery = batteryMetric()
         return (
             DashboardSnapshot(
                 timestamp: Date(),
                 cpu: cpu,
                 memory: memoryMetric(),
                 storage: storageMetric(),
-                battery: batteryMetric()),
+                battery: battery.charge,
+                batteryPower: battery.power),
             cpuSample)
     }
 
@@ -71,10 +73,10 @@ final class SystemSummaryCollector: SystemSummaryCollecting {
         return .available(MetricDisplay(value: percent, text: DashboardFormat.percent(percent)))
     }
 
-    private func batteryMetric() -> Availability<MetricDisplay> {
+    private func batteryMetric() -> (charge: Availability<MetricDisplay>, power: Availability<BatteryPower>) {
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else {
-            return .unavailable
+            return (.unavailable, .unavailable)
         }
         for source in sources {
             guard let description = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any],
@@ -85,9 +87,14 @@ final class SystemSummaryCollector: SystemSummaryCollecting {
                 continue
             }
             let percent = Double(current) * 100 / Double(maximum)
-            return .available(MetricDisplay(value: percent, text: DashboardFormat.percent(percent)))
+            let onAC = description[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue
+            let charging = description[kIOPSIsChargingKey] as? Bool ?? false
+            let power: BatteryPower = charging ? .charging : (onAC ? .pluggedNotCharging : .onBattery)
+            return (
+                .available(MetricDisplay(value: percent, text: DashboardFormat.percent(percent))),
+                .available(power))
         }
-        return .unavailable
+        return (.unavailable, .unavailable)
     }
 
     private func readCPUTicks() -> CPUTickSnapshot? {
@@ -132,6 +139,7 @@ final class SystemSummaryController {
     private var running = false
     private var previousCPU: CPUTickSnapshot?
     private var collecting = false
+    private var powerSourceSource: CFRunLoopSource?
     var onUpdate: @MainActor (DashboardSnapshot) -> Void
 
     init(scheduler: Scheduling, collector: SystemSummaryCollecting = SystemSummaryCollector(), onUpdate: @escaping @MainActor (DashboardSnapshot) -> Void) {
@@ -147,6 +155,7 @@ final class SystemSummaryController {
         lock.unlock()
         logger.info("summary collection started")
         _ = scheduler.scheduleImmediately { [weak self] in self?.collectIfNeeded() }
+        observePowerSourceChanges()
         let repeatingTask = scheduler.schedule(after: 5, repeating: 5) { [weak self] in self?.collectIfNeeded() }
         lock.lock()
         if running {
@@ -165,7 +174,35 @@ final class SystemSummaryController {
         self.task = nil
         lock.unlock()
         task?.cancel()
+        stopObservingPowerSourceChanges()
         logger.info("summary collection stopped")
+    }
+
+    /// Charge percentage moves in whole-percent steps, so a 5 second poll never
+    /// reflects plugging or unplugging the charger on its own. IOKit posts a
+    /// power source change immediately, which is what makes the strip realtime.
+    private func observePowerSourceChanges() {
+        precondition(Thread.isMainThread)
+        guard powerSourceSource == nil else { return }
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        guard let source = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context else { return }
+            Unmanaged<SystemSummaryController>.fromOpaque(context)
+                .takeUnretainedValue()
+                .collectIfNeeded()
+        }, context)?.takeRetainedValue() else {
+            logger.error("power source notifications unavailable")
+            return
+        }
+        powerSourceSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+    }
+
+    private func stopObservingPowerSourceChanges() {
+        precondition(Thread.isMainThread)
+        guard let source = powerSourceSource else { return }
+        powerSourceSource = nil
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .defaultMode)
     }
 
     private func collectIfNeeded() {
