@@ -27,6 +27,15 @@ Run this checklist against a locally built `DockAwake.app` on an Apple silicon M
 - [ ] Confirm Power Assertions render owner PID, owner name, and reason when available, otherwise N/A or Unknown without crashing.
 - [ ] Create a local listening TCP socket. Confirm its owning process can show the listener, IPv6 listeners use bracketed addresses, and process sorting is stable by the selected column with unavailable values below available values.
 
+## Containers and launch agents
+
+- [ ] With the runtime running, open the Containers tab. Shift-click and Command-click several rows. Confirm the Stop Selected button reports the selected count and stays disabled when only stopped containers are selected.
+- [ ] Press Stop Selected with two or more running containers. Confirm each is stopped through the runtime's graceful stop and the summary reports the stopped count, naming any container that failed.
+- [ ] Let the five-second refresh run while rows are selected. Confirm the selection is not dropped.
+- [ ] Stop the container runtime and reopen the tab. Confirm it reports the missing CLI or unreachable runtime instead of an empty list.
+- [ ] Open the LaunchAgents tab. Confirm every `~/Library/LaunchAgents` plist is listed, running jobs show a PID, loaded-but-idle jobs show Loaded, unknown jobs show Not loaded, and a plist without a `Label` shows Invalid.
+- [ ] Confirm a non-zero last exit status is highlighted and that no action in this tab loads, unloads, or edits any job.
+
 ## Build target and RunCat matrix
 
 - [ ] Build and launch the direct production app with the documented Apple silicon macOS 13 target. Confirm it includes all dashboard sources and the compiled `dockawake-pmset` helper.

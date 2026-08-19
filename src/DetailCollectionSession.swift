@@ -11,6 +11,7 @@ final class DetailCollectionSession {
     private let processCollector: ProcessCollector
     private let powerAssertionCollector: PowerAssertionCollector
     private let containerCollector: ContainerCollector
+    private let launchAgentCollector: LaunchAgentCollector
     private let publish: (DetailSnapshot) -> Void
     private let executor = DispatchQueue(label: "com.dockawake.detail", qos: .utility)
     private let worker = DispatchQueue(label: "com.dockawake.detail.collectors", qos: .utility)
@@ -26,9 +27,10 @@ final class DetailCollectionSession {
     private var processes: [ProcessRow] = []
     private var assertions: [PowerAssertionRow] = []
     private var containers: ContainerRuntimeStatus = .daemonUnreachable
+    private var launchAgents: LaunchAgentStatus = .runtimeUnreadable
 
     private var refreshInFlight = false
-    init(generation: UInt64, scheduler: Scheduling, networkCollector: NetworkCollector, publicIPClient: PublicIPClient, processCollector: ProcessCollector, powerAssertionCollector: PowerAssertionCollector, containerCollector: ContainerCollector, publish: @escaping (DetailSnapshot) -> Void) {
+    init(generation: UInt64, scheduler: Scheduling, networkCollector: NetworkCollector, publicIPClient: PublicIPClient, processCollector: ProcessCollector, powerAssertionCollector: PowerAssertionCollector, containerCollector: ContainerCollector, launchAgentCollector: LaunchAgentCollector, publish: @escaping (DetailSnapshot) -> Void) {
         self.generation = generation
         self.scheduler = scheduler
         self.networkCollector = networkCollector
@@ -36,6 +38,7 @@ final class DetailCollectionSession {
         self.processCollector = processCollector
         self.powerAssertionCollector = powerAssertionCollector
         self.containerCollector = containerCollector
+        self.launchAgentCollector = launchAgentCollector
         self.publish = publish
     }
 
@@ -85,6 +88,7 @@ final class DetailCollectionSession {
             self.processes.removeAll()
             self.assertions.removeAll()
             self.containers = .daemonUnreachable
+            self.launchAgents = .runtimeUnreadable
             self.state = .stopped
             self.logger.info("detail session \(self.generation, privacy: .public) stopped")
         }
@@ -107,6 +111,8 @@ final class DetailCollectionSession {
                 }
                 guard self.isRunning else { return }
                 let containers = self.containerCollector.collect()
+                guard self.isRunning else { return }
+                let launchAgents = self.launchAgentCollector.collect()
                 self.executor.async {
                     guard !self.isCancelled, case .running = self.state else {
                         self.refreshInFlight = false
@@ -116,8 +122,9 @@ final class DetailCollectionSession {
                     self.processes = processes
                     self.assertions = assertions
                     self.containers = containers
+                    self.launchAgents = launchAgents
                     self.refreshInFlight = false
-                    self.publishIfRunning(interfaces: interfaces, processes: processes, assertions: assertions, containers: containers)
+                    self.publishIfRunning(interfaces: interfaces, processes: processes, assertions: assertions, containers: containers, launchAgents: launchAgents)
                 }
             }
         }
@@ -146,7 +153,7 @@ final class DetailCollectionSession {
                 self.publicIPRequest = nil
                 self.lifecycleLock.unlock()
                 self.publicIP = result
-                self.publishIfRunning(interfaces: self.interfaces, processes: self.processes, assertions: self.assertions, containers: self.containers)
+                self.publishIfRunning(interfaces: self.interfaces, processes: self.processes, assertions: self.assertions, containers: self.containers, launchAgents: self.launchAgents)
             }
         }
         lifecycleLock.lock()
@@ -161,9 +168,9 @@ final class DetailCollectionSession {
     }
 
 
-    private func publishIfRunning(interfaces: [NetworkInterfaceSnapshot], processes: [ProcessRow], assertions: [PowerAssertionRow], containers: ContainerRuntimeStatus) {
+    private func publishIfRunning(interfaces: [NetworkInterfaceSnapshot], processes: [ProcessRow], assertions: [PowerAssertionRow], containers: ContainerRuntimeStatus, launchAgents: LaunchAgentStatus) {
         guard !isCancelled, case .running = state else { return }
-        let snapshot = DetailSnapshot(generation: generation, timestamp: Date(), interfaces: interfaces, publicIP: publicIP, powerAssertions: assertions, processes: processes, containers: containers)
+        let snapshot = DetailSnapshot(generation: generation, timestamp: Date(), interfaces: interfaces, publicIP: publicIP, powerAssertions: assertions, processes: processes, containers: containers, launchAgents: launchAgents)
         DispatchQueue.main.async { [weak self, publish] in
             guard let self, !self.isCancelled else { return }
             publish(snapshot)

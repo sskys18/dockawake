@@ -18,7 +18,7 @@ private final class TextTableView: NSView, NSTableViewDataSource, NSTableViewDel
     /// Colour here is state, never decoration.
     var cellColor: ((Int, Int) -> NSColor?)?
     var onSelectionChange: (() -> Void)?
-    var selectedRowIndex: Int? { table.selectedRow >= 0 ? table.selectedRow : nil }
+    var selectedRowIndexes: IndexSet { table.selectedRowIndexes }
 
     init(columns: [TextColumn], accessibilityLabel: String, visibleRows: Int, allowsSelection: Bool = false) {
         self.columns = columns
@@ -42,7 +42,7 @@ private final class TextTableView: NSView, NSTableViewDataSource, NSTableViewDel
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.setAccessibilityLabel(accessibilityLabel)
         table.allowsEmptySelection = true
-        table.allowsMultipleSelection = false
+        table.allowsMultipleSelection = allowsSelection
         table.selectionHighlightStyle = allowsSelection ? .regular : .none
 
         table.backgroundColor = .controlBackgroundColor
@@ -84,13 +84,13 @@ private final class TextTableView: NSView, NSTableViewDataSource, NSTableViewDel
     required init?(coder: NSCoder) { nil }
 
     func update(_ rows: [[String]]) {
-        let previous = table.selectedRow
+        let previous = IndexSet(table.selectedRowIndexes.filter { $0 < rows.count })
         self.rows = rows
         emptyLabel.isHidden = !rows.isEmpty
         table.reloadData()
-        // A five-second refresh must not drop the row the user is about to act on.
-        if previous >= 0, previous < rows.count {
-            table.selectRowIndexes(IndexSet(integer: previous), byExtendingSelection: false)
+        // A five-second refresh must not drop the rows the user is about to act on.
+        if !previous.isEmpty {
+            table.selectRowIndexes(previous, byExtendingSelection: false)
         }
     }
 
@@ -142,9 +142,9 @@ private enum DashboardCell {
 
 final class DashboardViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     var onAwakeChange: ((Bool) -> Void)?
-    /// Asks the owner to stop one container and report whether it succeeded.
-    /// The controller never runs commands itself.
-    var onContainerStop: ((String, @escaping (Bool) -> Void) -> Void)?
+    /// Asks the owner to stop the given containers and report, per container ID,
+    /// whether it succeeded. The controller never runs commands itself.
+    var onContainerStop: (([String], @escaping ([String: Bool]) -> Void) -> Void)?
 
     private let awakeSwitch = NSSwitch()
     private let awakeStateLabel = NSTextField(labelWithString: "Unknown")
@@ -170,8 +170,24 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     private let containerSummaryLabel = NSTextField(labelWithString: "")
     private var containersTabItem: NSTabViewItem?
     private var processesTabItem: NSTabViewItem?
+    private var launchAgentsTabItem: NSTabViewItem?
     private let containerStopButton = NSButton(title: "Stop Selected", target: nil, action: nil)
     private var containerRows: [ContainerRow] = []
+
+    private let launchAgentTable = TextTableView(
+        columns: [
+            TextColumn(title: "Label", width: 300, alignment: .left, help: "The launchd job label from the property list."),
+            TextColumn(title: "State", width: 92, alignment: .left, help: "Running means launchd currently has a process for the job. Loaded means launchd knows the job but it is not running now."),
+            TextColumn(title: "PID", width: 66, alignment: .right, help: "Process ID of the running job, if any."),
+            TextColumn(title: "Last exit", width: 74, alignment: .right, help: "Exit status of the job's last run as launchctl reports it. Non-zero means the last run failed."),
+            TextColumn(title: "Trigger", width: 150, alignment: .left, help: "When launchd starts this job: at load, kept alive, on an interval, on a calendar, or only manually."),
+            TextColumn(title: "Program", width: 300, alignment: .left, help: "Program or program arguments the job runs."),
+            TextColumn(title: "File", width: 230, alignment: .left, help: "Property list file name inside ~/Library/LaunchAgents.")
+        ],
+        accessibilityLabel: "User launch agents",
+        visibleRows: 5)
+    private let launchAgentSummaryLabel = NSTextField(labelWithString: "")
+    private var launchAgentRows: [LaunchAgentRow] = []
 
     override func loadView() {
         let root = NSView()
@@ -226,6 +242,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         tabView.translatesAutoresizingMaskIntoConstraints = false
         tabView.addTabViewItem(makeProcessesTab())
         tabView.addTabViewItem(makeContainersTab())
+        tabView.addTabViewItem(makeLaunchAgentsTab())
         tabView.setAccessibilityLabel("Dashboard sections")
         tabView.selectFirstTabViewItem(nil)
 
@@ -251,7 +268,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         let item = NSTabViewItem(identifier: "containers")
         item.label = "Containers"
         item.view = page(
-            "Containers on the local Docker-compatible runtime. Select a row and press Stop Selected to shut one down through the runtime's own graceful stop; nothing here is killed outright.",
+            "Containers on the local Docker-compatible runtime. Select one or more rows (Shift or Command click) and press Stop Selected to shut them down through the runtime's own graceful stop; nothing here is killed outright.",
             fill: containerTable,
             footer: controls)
         containersTabItem = item
@@ -284,6 +301,18 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             fill: tableScroll,
             footer: updatedLabel)
         processesTabItem = item
+        return item
+    }
+
+    private func makeLaunchAgentsTab() -> NSTabViewItem {
+        configureLaunchAgentCard()
+        let item = NSTabViewItem(identifier: "launchAgents")
+        item.label = "LaunchAgents"
+        item.view = page(
+            "The launchd agents you installed in ~/Library/LaunchAgents, joined with their live state from launchctl. Invalid marks a file launchd would reject because it carries no Label. Read-only: DockAwake never loads, unloads, or edits a job.",
+            fill: launchAgentTable,
+            footer: launchAgentSummaryLabel)
+        launchAgentsTabItem = item
         return item
     }
 
@@ -381,11 +410,15 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         }
         publicIPLabel.setAccessibilityValue(publicIPLabel.stringValue)
         updateContainers(snapshot.containers)
+        updateLaunchAgents(snapshot.launchAgents)
         processRows = snapshot.processes
         sortProcesses()
         processTable.reloadData()
         updatedLabel.stringValue = "\(processRows.count) processes · updated \(Self.timeFormatter.string(from: snapshot.timestamp))"
-        setTabCounts(containers: snapshot.containers.runningCount, processes: processRows.count)
+        setTabCounts(
+            containers: snapshot.containers.runningCount,
+            processes: processRows.count,
+            launchAgents: snapshot.launchAgents.runningCount)
     }
 
     func clearDetail() {
@@ -398,9 +431,12 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         containerTable.update([])
         containerSummaryLabel.stringValue = ""
         containerStopButton.isEnabled = false
+        launchAgentRows.removeAll()
+        launchAgentTable.update([])
+        launchAgentSummaryLabel.stringValue = ""
         processRows.removeAll()
         processTable.reloadData()
-        setTabCounts(containers: nil, processes: nil)
+        setTabCounts(containers: nil, processes: nil, launchAgents: nil)
     }
 
     /// Sums only interfaces that actually carry an address. The two dozen empty
@@ -419,9 +455,10 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     /// The container count is deliberately the running count, not the total:
     /// stopped containers cost nothing and are not what the tab is warning about.
-    private func setTabCounts(containers: Int?, processes: Int?) {
+    private func setTabCounts(containers: Int?, processes: Int?, launchAgents: Int?) {
         containersTabItem?.label = Self.tabLabel("Containers", count: containers)
         processesTabItem?.label = Self.tabLabel("Processes", count: processes)
+        launchAgentsTabItem?.label = Self.tabLabel("LaunchAgents", count: launchAgents)
     }
 
     private static func tabLabel(_ title: String, count: Int?) -> String {
@@ -451,6 +488,37 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         syncContainerStopButton()
     }
 
+    private func updateLaunchAgents(_ status: LaunchAgentStatus) {
+        switch status {
+        case .directoryUnreadable:
+            launchAgentTable.setEmptyText("No ~/Library/LaunchAgents directory")
+        case .runtimeUnreadable:
+            launchAgentTable.setEmptyText("launchctl did not answer")
+        case .available:
+            launchAgentTable.setEmptyText("No user launch agents")
+        }
+        launchAgentRows = status.rows
+        launchAgentTable.update(launchAgentRows.map { row in
+            [row.labelText, row.stateText, row.pidText, row.lastExitText, row.trigger, row.programText, row.fileName]
+        })
+        launchAgentSummaryLabel.stringValue = status.summaryText
+        launchAgentSummaryLabel.textColor = status.runningCount > 0 ? .systemGreen : .secondaryLabelColor
+    }
+
+    private func configureLaunchAgentCard() {
+        launchAgentTable.setEmptyText("No user launch agents")
+        launchAgentTable.cellColor = { [weak self] row, column in
+            guard let self, self.launchAgentRows.indices.contains(row) else { return nil }
+            let agent = self.launchAgentRows[row]
+            if agent.isInvalid { return column == 1 ? .systemOrange : .secondaryLabelColor }
+            if column == 3, agent.failedLastRun { return .systemRed }
+            guard agent.isLoaded else { return .secondaryLabelColor }
+            return column == 1 && agent.isRunning ? .systemGreen : .labelColor
+        }
+        launchAgentSummaryLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        launchAgentSummaryLabel.textColor = .secondaryLabelColor
+    }
+
     private func configureContainerCard() {
         containerTable.setEmptyText("No containers")
         containerTable.cellColor = { [weak self] row, column in
@@ -472,28 +540,40 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         containerSummaryLabel.textColor = .secondaryLabelColor
     }
 
-    /// Only a selected, still-running container can be stopped, so the button
+    /// Only selected, still-running containers can be stopped, so the button
     /// state is derived from the current selection rather than tracked separately.
     private func syncContainerStopButton() {
-        containerStopButton.isEnabled = selectedRunningContainer() != nil
+        let selected = selectedRunningContainers()
+        containerStopButton.isEnabled = !selected.isEmpty
+        containerStopButton.title = selected.count > 1 ? "Stop Selected (\(selected.count))" : "Stop Selected"
     }
 
-    private func selectedRunningContainer() -> ContainerRow? {
-        guard let index = containerTable.selectedRowIndex, containerRows.indices.contains(index) else { return nil }
-        let row = containerRows[index]
-        return row.isRunning ? row : nil
+    private func selectedRunningContainers() -> [ContainerRow] {
+        containerTable.selectedRowIndexes
+            .filter { containerRows.indices.contains($0) }
+            .map { containerRows[$0] }
+            .filter(\.isRunning)
     }
 
     @objc private func stopSelectedContainer() {
-        guard let row = selectedRunningContainer(), let onContainerStop else { return }
+        let rows = selectedRunningContainers()
+        guard !rows.isEmpty, let onContainerStop else { return }
         containerStopButton.isEnabled = false
-        containerSummaryLabel.stringValue = "Stopping \(row.displayName)…"
-        onContainerStop(row.id) { [weak self] succeeded in
+        containerSummaryLabel.stringValue = rows.count == 1
+            ? "Stopping \(rows[0].displayName)…"
+            : "Stopping \(rows.count) containers…"
+        onContainerStop(rows.map(\.id)) { [weak self] results in
             precondition(Thread.isMainThread)
             guard let self else { return }
-            self.containerSummaryLabel.stringValue = succeeded
-                ? "Stopped \(row.displayName)"
-                : "Could not stop \(row.displayName)"
+            let failed = rows.filter { results[$0.id] != true }
+            if failed.isEmpty {
+                self.containerSummaryLabel.stringValue = rows.count == 1
+                    ? "Stopped \(rows[0].displayName)"
+                    : "Stopped \(rows.count) containers"
+            } else {
+                self.containerSummaryLabel.stringValue =
+                    "Stopped \(rows.count - failed.count) of \(rows.count) · failed: \(failed.map(\.displayName).joined(separator: ", "))"
+            }
             self.syncContainerStopButton()
         }
     }

@@ -230,7 +230,8 @@ final class CoreBehaviorTests: XCTestCase {
             publicIPClient: PublicIPClient(),
             processCollector: ProcessCollector(),
             powerAssertionCollector: PowerAssertionCollector(),
-            containerCollector: ContainerCollector(runner: RecordingRunner(results: []), isExecutable: { _ in false })
+            containerCollector: ContainerCollector(runner: RecordingRunner(results: []), isExecutable: { _ in false }),
+            launchAgentCollector: LaunchAgentCollector(runner: RecordingRunner(results: []))
         ) { _ in
             published.fulfill()
         }
@@ -252,7 +253,8 @@ final class CoreBehaviorTests: XCTestCase {
             publicIPClient: PublicIPClient(),
             processCollector: ProcessCollector(),
             powerAssertionCollector: PowerAssertionCollector(),
-            containerCollector: ContainerCollector(runner: RecordingRunner(results: []), isExecutable: { _ in false })
+            containerCollector: ContainerCollector(runner: RecordingRunner(results: []), isExecutable: { _ in false }),
+            launchAgentCollector: LaunchAgentCollector(runner: RecordingRunner(results: []))
         ) { _ in }
 
         session.start()
@@ -418,6 +420,102 @@ final class CoreBehaviorTests: XCTestCase {
         XCTAssertEqual(runner.calls, [RecordingRunner.Call(
             executable: "/usr/local/bin/docker",
             arguments: ["stop", "aaa111"])])
+    }
+
+    func testLaunchAgentListParsingSkipsHeaderAndReadsUnloadedPID() {
+        let output = Data("PID\tStatus\tLabel\n742\t0\tcom.example.worker\n-\t-9\tcom.example.idle\nbroken line\n".utf8)
+
+        let runtime = LaunchAgentCollector.parseList(output)
+
+        XCTAssertEqual(runtime.count, 2)
+        XCTAssertEqual(runtime["com.example.worker"], LaunchAgentRuntime(pid: 742, lastExitStatus: 0))
+        XCTAssertEqual(runtime["com.example.idle"], LaunchAgentRuntime(pid: nil, lastExitStatus: -9))
+        XCTAssertNil(runtime["Label"])
+    }
+
+    func testLaunchAgentDefinitionRequiresLabelAndDescribesItsTrigger() throws {
+        let withLabel = try PropertyListSerialization.data(
+            fromPropertyList: [
+                "Label": "com.example.worker",
+                "ProgramArguments": ["/bin/echo", "hi"],
+                "RunAtLoad": true,
+                "StartInterval": 300
+            ] as [String: Any],
+            format: .xml,
+            options: 0)
+        let withoutLabel = try PropertyListSerialization.data(
+            fromPropertyList: ["Program": "/bin/echo"] as [String: Any],
+            format: .xml,
+            options: 0)
+
+        XCTAssertEqual(
+            LaunchAgentCollector.parseDefinition(withLabel),
+            LaunchAgentCollector.Definition(
+                label: "com.example.worker",
+                program: "/bin/echo hi",
+                trigger: "At load · Every 300s"))
+        XCTAssertNil(LaunchAgentCollector.parseDefinition(withoutLabel))
+    }
+
+    func testLaunchAgentCollectorReportsRuntimeUnreadableWhenLaunchctlFails() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let runner = RecordingRunner(results: [
+            CommandResult(status: 1, output: Data(), timedOut: false, exceededOutputLimit: false)
+        ])
+        let collector = LaunchAgentCollector(runner: runner, directory: directory)
+
+        XCTAssertEqual(collector.collect(), .runtimeUnreadable)
+        XCTAssertEqual(runner.calls, [RecordingRunner.Call(executable: "/bin/launchctl", arguments: ["list"])])
+    }
+
+    func testLaunchAgentCollectorJoinsPlistsWithLiveStateAndOrdersRunningFirst() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try write(label: "com.example.idle", program: "/bin/sleep", to: directory.appendingPathComponent("idle.plist"))
+        try write(label: "com.example.worker", program: "/bin/echo", to: directory.appendingPathComponent("worker.plist"))
+        try write(label: "com.example.unloaded", program: "/bin/date", to: directory.appendingPathComponent("unloaded.plist"))
+        try PropertyListSerialization
+            .data(fromPropertyList: [String: Any](), format: .xml, options: 0)
+            .write(to: directory.appendingPathComponent("stub.plist"))
+        let runner = RecordingRunner(results: [
+            CommandResult(
+                status: 0,
+                output: Data("PID\tStatus\tLabel\n742\t0\tcom.example.worker\n-\t3\tcom.example.idle\n".utf8),
+                timedOut: false,
+                exceededOutputLimit: false)
+        ])
+        let collector = LaunchAgentCollector(runner: runner, directory: directory)
+
+        let rows = collector.collect().rows
+
+        XCTAssertEqual(
+            rows.map(\.labelText),
+            ["com.example.worker", "com.example.idle", "com.example.unloaded", "(no Label)"])
+        XCTAssertEqual(rows[0].stateText, "Running")
+        XCTAssertEqual(rows[0].pidText, "742")
+        XCTAssertFalse(rows[0].failedLastRun)
+        XCTAssertEqual(rows[1].stateText, "Loaded")
+        XCTAssertEqual(rows[1].lastExitText, "3")
+        XCTAssertTrue(rows[1].failedLastRun)
+        XCTAssertEqual(rows[2].stateText, "Not loaded")
+        XCTAssertEqual(rows[2].pidText, "-")
+        XCTAssertEqual(rows[2].lastExitText, "-")
+        XCTAssertEqual(rows[3].stateText, "Invalid")
+        XCTAssertEqual(rows[3].fileName, "stub.plist")
+        XCTAssertEqual(
+            LaunchAgentStatus.available(rows).summaryText,
+            "1 running · 2 loaded · 4 total · 1 invalid")
+    }
+
+    private func write(label: String, program: String, to url: URL) throws {
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: ["Label": label, "Program": program] as [String: Any],
+            format: .xml,
+            options: 0)
+        try data.write(to: url)
     }
 
     func testContainerStopFailsWhenTheRuntimeTimesOut() {

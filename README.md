@@ -9,8 +9,10 @@ Left-click opens a transient dashboard with:
 - Every detected network interface, local IP addresses, link speed, traffic rates and totals
 - One public-IP lookup from `https://api.ipify.org?format=json`
 - A sortable process table with CPU, memory, `Energy proxy (CPU-based)`, and listening ports
+- A Containers tab for the local Docker-compatible runtime, with multi-row selection and a graceful Stop Selected for one or many containers at once
+- A LaunchAgents tab listing your own `~/Library/LaunchAgents` jobs joined with their live `launchctl` state; read-only, so nothing is loaded, unloaded, or edited
 
-The summary strip refreshes immediately and every five seconds. Detailed network, process, port, assertion, and public-IP work starts only while the dashboard is open and is canceled when it closes. Missing or inaccessible values display as `N/A`, `Unavailable`, or `Unknown`; DockAwake does not invent replacement data.
+The summary strip refreshes immediately and every five seconds. Detailed network, process, port, assertion, container, launch-agent, and public-IP work starts only while the dashboard is open and is canceled when it closes. Missing or inaccessible values display as `N/A`, `Unavailable`, or `Unknown`; DockAwake does not invent replacement data.
 
 Memory used counts active, inactive, wired, and compressed pages against total physical memory, and disk used is the root volume's total minus available capacity. Both are read from public macOS APIs and are not expected to match Activity Monitor's or `df`'s presentation exactly.
 
@@ -56,6 +58,7 @@ Administrator authentication is required once for the DockAwake helper installat
 - **Keep Awake:** use the switch inside the dashboard
 - **Right-click:** Open Dashboard, read-only keep-awake status, Start at Login, and Quit
 - **Process sorting:** click a process column; unavailable numeric values remain last
+- **Container shutdown:** select one or more running containers (Shift or Command click) and press Stop Selected; each is stopped through the runtime's own graceful stop and the result is reported per container
 - **Quit:** waits for the final ordered helper `off` operation and restores normal sleep
 
 When keeping the Mac awake with the lid closed, use a stable power source and ensure airflow. Closed-lid operation increases heat and battery consumption.

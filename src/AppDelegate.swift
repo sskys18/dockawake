@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var keepAwakeController: KeepAwakeController?
     private var detailSession: DetailCollectionSession?
     private let containerCollector = ContainerCollector()
+    private let launchAgentCollector = LaunchAgentCollector()
     private let containerQueue = DispatchQueue(label: "com.dockawake.containers", qos: .userInitiated)
     private var detailGeneration: UInt64 = 0
     private var escapeMonitor: Any?
@@ -63,11 +64,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         dashboard.onAwakeChange = { [weak self] desired in
             self?.keepAwakeController?.setDesired(desired)
         }
-        dashboard.onContainerStop = { [weak self] containerID, completion in
+        dashboard.onContainerStop = { [weak self] containerIDs, completion in
             guard let self else { return }
+            // Stops run one after another on a single queue: the runtime serializes
+            // them anyway, and a sequential pass reports one honest result per ID.
             self.containerQueue.async {
-                let succeeded = self.containerCollector.stop(containerID: containerID)
-                DispatchQueue.main.async { completion(succeeded) }
+                var results: [String: Bool] = [:]
+                for containerID in containerIDs {
+                    results[containerID] = self.containerCollector.stop(containerID: containerID)
+                }
+                DispatchQueue.main.async { completion(results) }
             }
         }
         summaryController = SystemSummaryController(scheduler: scheduler) { [weak self] snapshot in
@@ -125,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             processCollector: ProcessCollector(),
             powerAssertionCollector: PowerAssertionCollector(),
             containerCollector: containerCollector,
+            launchAgentCollector: launchAgentCollector,
             publish: { [weak self] snapshot in
                 guard let self,
                       self.detailSession != nil,

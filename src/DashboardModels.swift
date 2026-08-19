@@ -221,6 +221,81 @@ enum ContainerRuntimeStatus: Equatable {
     }
 }
 
+struct LaunchAgentRuntime: Equatable {
+    let pid: Int32?
+    let lastExitStatus: Int32?
+}
+
+struct LaunchAgentRow: Equatable, Identifiable {
+    let label: String
+    let fileName: String
+    let program: String
+    let trigger: String
+    let pid: Int32?
+    let lastExitStatus: Int32?
+    let isLoaded: Bool
+
+    /// One directory cannot hold two files of the same name, and an invalid job
+    /// has no label to identify it by, so the file name is the stable identity.
+    var id: String { fileName }
+    var isRunning: Bool { pid != nil }
+
+    /// launchd refuses a job without a Label, so such a file is listed as invalid
+    /// rather than hidden from the user who put it in the directory.
+    var isInvalid: Bool { label.isEmpty }
+    var labelText: String { label.isEmpty ? "(no Label)" : label }
+
+    var stateText: String {
+        if isInvalid { return "Invalid" }
+        if isRunning { return "Running" }
+        return isLoaded ? "Loaded" : "Not loaded"
+    }
+
+    var pidText: String { pid.map(String.init) ?? "-" }
+    var programText: String { program.isEmpty ? "N/A" : program }
+
+    /// launchctl reports the last exit status only for a job it knows about, so
+    /// an unloaded job shows nothing rather than a fabricated success.
+    var lastExitText: String {
+        guard let lastExitStatus else { return "-" }
+        return String(lastExitStatus)
+    }
+
+    var failedLastRun: Bool { (lastExitStatus ?? 0) != 0 }
+}
+
+/// Distinguishes "no user launch agents" from "could not read them", which the
+/// dashboard shows as different text rather than an empty table in both cases.
+enum LaunchAgentStatus: Equatable {
+    case directoryUnreadable
+    case runtimeUnreadable
+    case available([LaunchAgentRow])
+
+    var rows: [LaunchAgentRow] {
+        guard case let .available(rows) = self else { return [] }
+        return rows
+    }
+
+    var runningCount: Int { rows.filter(\.isRunning).count }
+
+    var summaryText: String {
+        switch self {
+        case .directoryUnreadable:
+            return "No ~/Library/LaunchAgents"
+        case .runtimeUnreadable:
+            return "launchctl unavailable"
+        case let .available(rows):
+            let running = rows.filter(\.isRunning).count
+            let loaded = rows.filter(\.isLoaded).count
+            let invalid = rows.filter(\.isInvalid).count
+            guard invalid == 0 else {
+                return "\(running) running · \(loaded) loaded · \(rows.count) total · \(invalid) invalid"
+            }
+            return "\(running) running · \(loaded) loaded · \(rows.count) total"
+        }
+    }
+}
+
 struct DetailSnapshot: Equatable {
     let generation: UInt64
     let timestamp: Date
@@ -229,6 +304,7 @@ struct DetailSnapshot: Equatable {
     let powerAssertions: [PowerAssertionRow]
     let processes: [ProcessRow]
     let containers: ContainerRuntimeStatus
+    let launchAgents: LaunchAgentStatus
 }
 
 typealias ProcessDetailSnapshot = ProcessRow
