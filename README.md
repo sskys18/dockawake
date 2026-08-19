@@ -10,7 +10,7 @@ Left-click opens a transient dashboard with:
 - One public-IP lookup from `https://api.ipify.org?format=json`
 - A sortable process table with CPU, memory, `Energy proxy (CPU-based)`, and listening ports
 - A Containers tab for the local Docker-compatible runtime, with multi-row selection and a graceful Stop Selected for one or many containers at once
-- A LaunchAgents tab listing your own `~/Library/LaunchAgents` jobs joined with their live `launchctl` state; read-only, so nothing is loaded, unloaded, or edited
+- A LaunchAgents tab listing every non-Apple launchd job in your user domain: the `~/Library/LaunchAgents` property lists plus the jobs apps register for themselves, joined with their live `launchctl` state; read-only, so nothing is loaded, unloaded, or edited
 
 The summary strip refreshes immediately and every five seconds. Detailed network, process, port, assertion, container, launch-agent, and public-IP work starts only while the dashboard is open and is canceled when it closes. Missing or inaccessible values display as `N/A`, `Unavailable`, or `Unknown`; DockAwake does not invent replacement data.
 

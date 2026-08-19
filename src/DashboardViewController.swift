@@ -180,9 +180,9 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             TextColumn(title: "State", width: 92, alignment: .left, help: "Running means launchd currently has a process for the job. Loaded means launchd knows the job but it is not running now."),
             TextColumn(title: "PID", width: 66, alignment: .right, help: "Process ID of the running job, if any."),
             TextColumn(title: "Last exit", width: 74, alignment: .right, help: "Exit status of the job's last run as launchctl reports it. Non-zero means the last run failed."),
-            TextColumn(title: "Trigger", width: 150, alignment: .left, help: "When launchd starts this job: at load, kept alive, on an interval, on a calendar, or only manually."),
-            TextColumn(title: "Program", width: 300, alignment: .left, help: "Program or program arguments the job runs."),
-            TextColumn(title: "File", width: 230, alignment: .left, help: "Property list file name inside ~/Library/LaunchAgents.")
+            TextColumn(title: "Trigger", width: 150, alignment: .left, help: "When launchd starts this job: at load, kept alive, on an interval, on a calendar, or only manually. Unknown for jobs with no property list here."),
+            TextColumn(title: "Program", width: 300, alignment: .left, help: "Program or program arguments the job runs, when a local property list declares it."),
+            TextColumn(title: "Source", width: 230, alignment: .left, help: "Property list file inside ~/Library/LaunchAgents, or App-registered for a job an app registered itself.")
         ],
         accessibilityLabel: "User launch agents",
         visibleRows: 5)
@@ -309,7 +309,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         let item = NSTabViewItem(identifier: "launchAgents")
         item.label = "LaunchAgents"
         item.view = page(
-            "The launchd agents you installed in ~/Library/LaunchAgents, joined with their live state from launchctl. Invalid marks a file launchd would reject because it carries no Label. Read-only: DockAwake never loads, unloads, or edits a job.",
+            "Every non-Apple launchd job in your user domain: the property lists in ~/Library/LaunchAgents plus the jobs apps register for themselves, which write no file there. Invalid marks a file launchd would reject because it carries no Label. Read-only: DockAwake never loads, unloads, or edits a job.",
             fill: launchAgentTable,
             footer: launchAgentSummaryLabel)
         launchAgentsTabItem = item
@@ -499,7 +499,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         }
         launchAgentRows = status.rows
         launchAgentTable.update(launchAgentRows.map { row in
-            [row.labelText, row.stateText, row.pidText, row.lastExitText, row.trigger, row.programText, row.fileName]
+            [row.labelText, row.stateText, row.pidText, row.lastExitText, row.triggerText, row.programText, row.sourceText]
         })
         launchAgentSummaryLabel.stringValue = status.summaryText
         launchAgentSummaryLabel.textColor = status.runningCount > 0 ? .systemGreen : .secondaryLabelColor
@@ -511,6 +511,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             guard let self, self.launchAgentRows.indices.contains(row) else { return nil }
             let agent = self.launchAgentRows[row]
             if agent.isInvalid { return column == 1 ? .systemOrange : .secondaryLabelColor }
+            if !agent.hasLocalFile, column == 6 { return .secondaryLabelColor }
             if column == 3, agent.failedLastRun { return .systemRed }
             guard agent.isLoaded else { return .secondaryLabelColor }
             return column == 1 && agent.isRunning ? .systemGreen : .labelColor

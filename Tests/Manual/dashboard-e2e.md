@@ -34,6 +34,7 @@ Run this checklist against a locally built `DockAwake.app` on an Apple silicon M
 - [ ] Let the five-second refresh run while rows are selected. Confirm the selection is not dropped.
 - [ ] Stop the container runtime and reopen the tab. Confirm it reports the missing CLI or unreachable runtime instead of an empty list.
 - [ ] Open the LaunchAgents tab. Confirm every `~/Library/LaunchAgents` plist is listed, running jobs show a PID, loaded-but-idle jobs show Loaded, unknown jobs show Not loaded, and a plist without a `Label` shows Invalid.
+- [ ] Confirm jobs an app registered for itself appear with Source `App-registered` and Unknown trigger and program, that they match `launchctl list` minus `com.apple.` and `application.` labels, and that Apple's own agents are absent.
 - [ ] Confirm a non-zero last exit status is highlighted and that no action in this tab loads, unloads, or edits any job.
 
 ## Build target and RunCat matrix

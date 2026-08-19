@@ -245,6 +245,15 @@ struct LaunchAgentRow: Equatable, Identifiable {
     var isInvalid: Bool { label.isEmpty }
     var labelText: String { label.isEmpty ? "(no Label)" : label }
 
+    /// A job loaded from somewhere other than ~/Library/LaunchAgents, typically
+    /// registered by an app through SMAppService or shipped inside its bundle.
+    var hasLocalFile: Bool { !fileName.isEmpty }
+    var sourceText: String { hasLocalFile ? fileName : "App-registered" }
+
+    /// Only a local file tells us what the job runs and when. For the rest the
+    /// live state is all launchd handed over, and Unknown says exactly that.
+    var triggerText: String { hasLocalFile ? trigger : "Unknown" }
+
     var stateText: String {
         if isInvalid { return "Invalid" }
         if isRunning { return "Running" }
@@ -252,7 +261,11 @@ struct LaunchAgentRow: Equatable, Identifiable {
     }
 
     var pidText: String { pid.map(String.init) ?? "-" }
-    var programText: String { program.isEmpty ? "N/A" : program }
+
+    var programText: String {
+        guard hasLocalFile else { return "Unknown" }
+        return program.isEmpty ? "N/A" : program
+    }
 
     /// launchctl reports the last exit status only for a job it knows about, so
     /// an unloaded job shows nothing rather than a fabricated success.

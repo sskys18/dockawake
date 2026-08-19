@@ -510,6 +510,39 @@ final class CoreBehaviorTests: XCTestCase {
             "1 running · 2 loaded · 4 total · 1 invalid")
     }
 
+    func testLaunchAgentCollectorListsAppRegisteredJobsAndDropsAppleAgents() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try write(label: "com.example.worker", program: "/bin/echo", to: directory.appendingPathComponent("worker.plist"))
+        let output = """
+        PID\tStatus\tLabel
+        742\t0\tcom.example.worker
+        1267\t0\tcom.openssh.ssh-agent
+        -\t0\tcom.1password.1password-launcher
+        601\t0\tcom.apple.Spotlight
+        44272\t0\tapplication.ru.keepcoder.Telegram.153008649.153008847
+
+        """
+        let runner = RecordingRunner(results: [
+            CommandResult(status: 0, output: Data(output.utf8), timedOut: false, exceededOutputLimit: false)
+        ])
+
+        let rows = LaunchAgentCollector(runner: runner, directory: directory).collect().rows
+
+        XCTAssertEqual(
+            Set(rows.map(\.label)),
+            ["com.example.worker", "com.openssh.ssh-agent", "com.1password.1password-launcher"])
+        let agent = try XCTUnwrap(rows.first { $0.label == "com.openssh.ssh-agent" })
+        XCTAssertEqual(agent.sourceText, "App-registered")
+        XCTAssertEqual(agent.programText, "Unknown")
+        XCTAssertEqual(agent.triggerText, "Unknown")
+        XCTAssertEqual(agent.stateText, "Running")
+        let fileBacked = try XCTUnwrap(rows.first { $0.label == "com.example.worker" })
+        XCTAssertEqual(fileBacked.sourceText, "worker.plist")
+        XCTAssertEqual(fileBacked.programText, "/bin/echo")
+    }
+
     private func write(label: String, program: String, to url: URL) throws {
         let data = try PropertyListSerialization.data(
             fromPropertyList: ["Label": label, "Program": program] as [String: Any],

@@ -1,11 +1,14 @@
 import Foundation
 
-/// Reads the user's own launchd agents: the property lists in
-/// `~/Library/LaunchAgents` joined with their live state from `launchctl list`.
+/// Reads the user's own launchd jobs: the property lists in
+/// `~/Library/LaunchAgents` joined with their live state from `launchctl list`,
+/// plus every other non-Apple job loaded in the user's launchd domain. Apps that
+/// register a background job through `SMAppService` or ship it inside their own
+/// bundle never write a file into `~/Library/LaunchAgents`, so a directory-only
+/// listing would hide most of what is actually running.
 ///
-/// Collection is read-only. System agents under `/Library/LaunchAgents` and
-/// `/System/Library/LaunchAgents` are deliberately out of scope; this tab is
-/// about the jobs the user installed, not the several hundred Apple ships.
+/// Collection is read-only. Apple's own agents are excluded: several hundred of
+/// them would bury the handful of jobs the user can act on.
 final class LaunchAgentCollector {
     static let executable = "/bin/launchctl"
 
@@ -47,12 +50,29 @@ final class LaunchAgentCollector {
                 lastExitStatus: live?.lastExitStatus,
                 isLoaded: live != nil))
         }
+        let described = Set(rows.map(\.label)).subtracting([""])
+        for (label, live) in runtime where !described.contains(label) && Self.isUserFacing(label) {
+            rows.append(LaunchAgentRow(
+                label: label,
+                fileName: "",
+                program: "",
+                trigger: "",
+                pid: live.pid,
+                lastExitStatus: live.lastExitStatus,
+                isLoaded: true))
+        }
         return .available(rows.sorted { lhs, rhs in
             if lhs.isRunning != rhs.isRunning { return lhs.isRunning }
             if lhs.isLoaded != rhs.isLoaded { return lhs.isLoaded }
             if lhs.isInvalid != rhs.isInvalid { return rhs.isInvalid }
             return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
         })
+    }
+
+    /// `application.*` labels are transient per-launch instances of running apps,
+    /// not installed jobs, so they belong in the Processes tab and not here.
+    static func isUserFacing(_ label: String) -> Bool {
+        !label.hasPrefix("com.apple.") && !label.hasPrefix("application.")
     }
 
     struct Definition: Equatable {
