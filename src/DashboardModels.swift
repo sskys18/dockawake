@@ -245,10 +245,12 @@ struct LaunchAgentRow: Equatable, Identifiable {
     var isInvalid: Bool { label.isEmpty }
     var labelText: String { label.isEmpty ? "(no Label)" : label }
 
-    /// A job loaded from somewhere other than ~/Library/LaunchAgents, typically
-    /// registered by an app through SMAppService or shipped inside its bundle.
+    /// A job loaded from somewhere other than ~/Library/LaunchAgents: registered
+    /// by an app through SMAppService, submitted by a running process, or
+    /// bootstrapped from a property list elsewhere on disk. Naming one of those
+    /// would need a per-job `launchctl print`, so the row says only what is known.
     var hasLocalFile: Bool { !fileName.isEmpty }
-    var sourceText: String { hasLocalFile ? fileName : "App-registered" }
+    var sourceText: String { hasLocalFile ? fileName : "Elsewhere" }
 
     /// Only a local file tells us what the job runs and when. For the rest the
     /// live state is all launchd handed over, and Unknown says exactly that.

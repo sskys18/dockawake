@@ -534,7 +534,7 @@ final class CoreBehaviorTests: XCTestCase {
             Set(rows.map(\.label)),
             ["com.example.worker", "com.openssh.ssh-agent", "com.1password.1password-launcher"])
         let agent = try XCTUnwrap(rows.first { $0.label == "com.openssh.ssh-agent" })
-        XCTAssertEqual(agent.sourceText, "App-registered")
+        XCTAssertEqual(agent.sourceText, "Elsewhere")
         XCTAssertEqual(agent.programText, "Unknown")
         XCTAssertEqual(agent.triggerText, "Unknown")
         XCTAssertEqual(agent.stateText, "Running")

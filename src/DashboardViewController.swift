@@ -182,7 +182,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             TextColumn(title: "Last exit", width: 74, alignment: .right, help: "Exit status of the job's last run as launchctl reports it. Non-zero means the last run failed."),
             TextColumn(title: "Trigger", width: 150, alignment: .left, help: "When launchd starts this job: at load, kept alive, on an interval, on a calendar, or only manually. Unknown for jobs with no property list here."),
             TextColumn(title: "Program", width: 300, alignment: .left, help: "Program or program arguments the job runs, when a local property list declares it."),
-            TextColumn(title: "Source", width: 230, alignment: .left, help: "Property list file inside ~/Library/LaunchAgents, or App-registered for a job an app registered itself.")
+            TextColumn(title: "Source", width: 230, alignment: .left, help: "Property list file inside ~/Library/LaunchAgents, or Elsewhere for a job launchd loaded from outside that directory.")
         ],
         accessibilityLabel: "User launch agents",
         visibleRows: 5)
@@ -309,7 +309,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         let item = NSTabViewItem(identifier: "launchAgents")
         item.label = "LaunchAgents"
         item.view = page(
-            "Every non-Apple launchd job in your user domain: the property lists in ~/Library/LaunchAgents plus the jobs apps register for themselves, which write no file there. Invalid marks a file launchd would reject because it carries no Label. Read-only: DockAwake never loads, unloads, or edits a job.",
+            "Every non-Apple launchd job in your user domain: the property lists in ~/Library/LaunchAgents plus every other non-Apple job loaded in your user domain, which writes no file there. Invalid marks a file launchd would reject because it carries no Label. Read-only: DockAwake never loads, unloads, or edits a job.",
             fill: launchAgentTable,
             footer: launchAgentSummaryLabel)
         launchAgentsTabItem = item
