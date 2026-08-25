@@ -152,6 +152,10 @@ struct ListeningPort: Hashable, Identifiable {
 struct ProcessRow: Equatable, Identifiable {
     let id: ProcessIdentity
     let name: String
+    /// Working directory of the process. Interpreter processes such as bun or
+    /// python all share one executable name, so the directory is the only thing
+    /// that says which project a given instance is actually running.
+    let directory: Availability<String>
     let cpuPercent: Availability<Double>
     let memoryBytes: Availability<UInt64>
     let energyProxyPercent: Availability<Double>
@@ -162,6 +166,7 @@ struct ProcessRow: Equatable, Identifiable {
     var cpuText: String { DashboardFormat.text(cpuPercent, formatter: DashboardFormat.processPercent) }
     var memoryText: String { DashboardFormat.text(memoryBytes, formatter: DashboardFormat.bytes) }
     var energyProxyText: String { DashboardFormat.text(energyProxyPercent, formatter: DashboardFormat.percent) }
+    var directoryText: String { DashboardFormat.text(directory, formatter: DashboardFormat.homeRelativePath) }
 }
 
 struct PowerAssertionRow: Equatable, Identifiable {
@@ -355,6 +360,16 @@ enum DashboardFormat {
         }
         return String(format: scaled >= 100 || index == 0 ? "%.0f %@" : "%.1f %@", scaled, units[index])
     }
+    /// A home-relative path keeps the meaningful tail of a project directory
+    /// visible in a narrow column instead of spending it on /Users/<name>.
+    static func homeRelativePath(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        guard !home.isEmpty else { return path }
+        if path == home { return "~" }
+        guard path.hasPrefix(home + "/") else { return path }
+        return "~" + path.dropFirst(home.count)
+    }
+
     static func address(_ address: String, port: UInt16) -> String {
         address.contains(":") ? "[\(address)]:\(port)" : "\(address):\(port)"
     }

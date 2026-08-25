@@ -582,6 +582,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     private func configureProcessTable() {
         let columns: [TextColumn] = [
             TextColumn(title: "Process", width: 250, alignment: .left, help: "Executable name. An (exited) suffix marks a process that just disappeared."),
+            TextColumn(title: "Directory", width: 260, alignment: .left, help: "Working directory the process was launched in. Tells apart interpreter processes such as bun that all share one executable name. N/A means the process is not owned by you."),
             TextColumn(title: "PID", width: 66, alignment: .right, help: "Process ID assigned by macOS."),
             TextColumn(title: "CPU", width: 78, alignment: .right, help: "Share of one CPU core. 100% is one full core, so multi-threaded work exceeds 100%."),
             TextColumn(title: "Memory", width: 100, alignment: .right, help: "Physical memory footprint of the process."),
@@ -595,7 +596,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             tableColumn.width = column.width
             tableColumn.minWidth = 44
             tableColumn.headerToolTip = column.help
-            tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: "\(index)", ascending: index != 2)
+            tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: "\(index)", ascending: index != 3)
             processTable.addTableColumn(tableColumn)
         }
         processColumnAlignments = columns.map(\.alignment)
@@ -618,19 +619,21 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     private func processCellColor(_ row: ProcessRow, column: Int) -> NSColor {
         guard !row.isRetainedMissing else { return .secondaryLabelColor }
         switch column {
-        case 2:
+        case 1:
+            return row.directory.value == nil ? .secondaryLabelColor : .labelColor
+        case 3:
             guard let cpu = row.cpuPercent.value else { return .labelColor }
             if cpu >= 100 { return .systemRed }
             if cpu >= 50 { return .systemOrange }
             return .labelColor
-        case 3:
+        case 4:
             guard let bytes = row.memoryBytes.value else { return .labelColor }
             if bytes >= 4 * 1024 * 1024 * 1024 { return .systemRed }
             if bytes >= 1024 * 1024 * 1024 { return .systemOrange }
             return .labelColor
-        case 5:
-            return row.ports.value?.isEmpty == false ? .systemBlue : .labelColor
         case 6:
+            return row.ports.value?.isEmpty == false ? .systemBlue : .labelColor
+        case 7:
             return assertionsByPID[row.id.pid] == nil ? .labelColor : .systemOrange
         default:
             return .labelColor
@@ -644,7 +647,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         let cell = DashboardCell.make(in: tableView, column: tableColumn, owner: self)
         let value = processText(processRows[row], column: index)
         cell.textField?.stringValue = value
-        cell.toolTip = index == 6 ? (assertionsByPID[processRows[row].id.pid]?.reason ?? value) : value
+        cell.toolTip = index == 7 ? (assertionsByPID[processRows[row].id.pid]?.reason ?? value) : value
         cell.textField?.alignment = processColumnAlignments.indices.contains(index) ? processColumnAlignments[index] : .left
         cell.textField?.textColor = processCellColor(processRows[row], column: index)
         cell.textField?.setAccessibilityLabel("\(tableColumn.title): \(value)")
@@ -659,7 +662,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     }
 
     private func sortProcesses() {
-        let index = Int(processSort.key ?? "2") ?? 2
+        let index = Int(processSort.key ?? "3") ?? 3
         processRows.sort { left, right in
             let leftUnavailable = isUnavailable(left, column: index)
             let rightUnavailable = isUnavailable(right, column: index)
@@ -677,11 +680,12 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     private func processText(_ row: ProcessRow, column: Int) -> String {
         switch column {
         case 0: return row.isRetainedMissing ? "\(row.name) (exited)" : row.name
-        case 1: return String(row.id.pid)
-        case 2: return row.cpuText
-        case 3: return row.memoryText
-        case 4: return row.energyProxyText
-        case 6: return assertionsByPID[row.id.pid]?.type ?? ""
+        case 1: return row.directoryText
+        case 2: return String(row.id.pid)
+        case 3: return row.cpuText
+        case 4: return row.memoryText
+        case 5: return row.energyProxyText
+        case 7: return assertionsByPID[row.id.pid]?.type ?? ""
         default:
             switch row.ports {
             case let .available(ports): return ports.isEmpty ? "None" : ports.map(\.displayText).joined(separator: ", ")
@@ -693,16 +697,19 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     private func isUnavailable(_ row: ProcessRow, column: Int) -> Bool {
         switch column {
-        case 2:
-            if case .available = row.cpuPercent { return false }
+        case 1:
+            if case .available = row.directory { return false }
             return true
         case 3:
-            if case .available = row.memoryBytes { return false }
+            if case .available = row.cpuPercent { return false }
             return true
         case 4:
-            if case .available = row.energyProxyPercent { return false }
+            if case .available = row.memoryBytes { return false }
             return true
         case 5:
+            if case .available = row.energyProxyPercent { return false }
+            return true
+        case 6:
             if case .available = row.ports { return false }
             return true
         default:
@@ -714,12 +721,13 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     private func compare(_ left: ProcessRow, _ right: ProcessRow, column: Int) -> ComparisonResult {
         switch column {
         case 0: return left.name.localizedStandardCompare(right.name)
-        case 1: return left.id.pid == right.id.pid ? .orderedSame : (left.id.pid < right.id.pid ? .orderedAscending : .orderedDescending)
-        case 2: return compare(left.cpuPercent, right.cpuPercent)
-        case 3: return compare(left.memoryBytes, right.memoryBytes)
-        case 4: return compare(left.energyProxyPercent, right.energyProxyPercent)
-        case 6: return processText(left, column: 6).localizedStandardCompare(processText(right, column: 6))
-        default: return processText(left, column: 5).localizedStandardCompare(processText(right, column: 5))
+        case 1: return left.directoryText.localizedStandardCompare(right.directoryText)
+        case 2: return left.id.pid == right.id.pid ? .orderedSame : (left.id.pid < right.id.pid ? .orderedAscending : .orderedDescending)
+        case 3: return compare(left.cpuPercent, right.cpuPercent)
+        case 4: return compare(left.memoryBytes, right.memoryBytes)
+        case 5: return compare(left.energyProxyPercent, right.energyProxyPercent)
+        case 7: return processText(left, column: 7).localizedStandardCompare(processText(right, column: 7))
+        default: return processText(left, column: 6).localizedStandardCompare(processText(right, column: 6))
         }
     }
 

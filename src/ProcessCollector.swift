@@ -10,6 +10,7 @@ final class ProcessCollector {
     private struct StoredRow {
         var row: ProcessRow
         var totalCPUTime: UInt64?
+        var directory: Availability<String>
         var sampledAt: TimeInterval
     }
 
@@ -53,12 +54,13 @@ final class ProcessCollector {
                 let row = ProcessRow(
                     id: identity,
                     name: prior?.row.name ?? "Unknown",
+                    directory: prior?.directory ?? .unavailable,
                     cpuPercent: .unavailable,
                     memoryBytes: .unavailable,
                     energyProxyPercent: .unavailable,
                     ports: .unavailable,
                     missingRefreshCount: 0)
-                next[identity] = StoredRow(row: row, totalCPUTime: nil, sampledAt: now)
+                next[identity] = StoredRow(row: row, totalCPUTime: nil, directory: prior?.directory ?? .unavailable, sampledAt: now)
                 continue
             }
             guard confirmedIdentity == identity else { continue }
@@ -77,14 +79,17 @@ final class ProcessCollector {
             if case let .available(value) = cpu {
                 energy = .available(min(100, max(0, value / Double(processorCount))))
             } else { energy = .unavailable }
-            let row = ProcessRow(id: identity, name: sample.name, cpuPercent: cpu, memoryBytes: memory, energyProxyPercent: energy, ports: .unavailable, missingRefreshCount: 0)
-            next[identity] = StoredRow(row: row, totalCPUTime: sample.totalCPUTime, sampledAt: now)
+            // The working directory is read once per process identity and then
+            // reused, so the per-refresh cost stays at one syscall per new PID.
+            let directory = prior?.directory ?? workingDirectory(for: identity.pid)
+            let row = ProcessRow(id: identity, name: sample.name, directory: directory, cpuPercent: cpu, memoryBytes: memory, energyProxyPercent: energy, ports: .unavailable, missingRefreshCount: 0)
+            next[identity] = StoredRow(row: row, totalCPUTime: sample.totalCPUTime, directory: directory, sampledAt: now)
         }
 
         for (identity, stored) in rows where !identitySet.contains(identity) {
             guard stored.row.missingRefreshCount == 0 else { continue }
-            let retained = ProcessRow(id: identity, name: stored.row.name, cpuPercent: .unavailable, memoryBytes: .unavailable, energyProxyPercent: .unavailable, ports: .unavailable, missingRefreshCount: 1)
-            next[identity] = StoredRow(row: retained, totalCPUTime: nil, sampledAt: now)
+            let retained = ProcessRow(id: identity, name: stored.row.name, directory: stored.directory, cpuPercent: .unavailable, memoryBytes: .unavailable, energyProxyPercent: .unavailable, ports: .unavailable, missingRefreshCount: 1)
+            next[identity] = StoredRow(row: retained, totalCPUTime: nil, directory: stored.directory, sampledAt: now)
         }
         rows = next
         mergePorts(readListeningPorts(), into: identitySet)
@@ -126,6 +131,19 @@ final class ProcessCollector {
         }
         let memory = usageResult == 0 ? usage.ri_phys_footprint : nil
         return Sample(name: command, totalCPUTime: cpuTime, memoryBytes: memory)
+    }
+
+    /// libproc only hands out a vnode path for processes this user owns, so a
+    /// root-owned process reports no directory rather than a wrong one.
+    private func workingDirectory(for pid: pid_t) -> Availability<String> {
+        var info = proc_vnodepathinfo()
+        let size = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, Int32(MemoryLayout<proc_vnodepathinfo>.size))
+        guard size == Int32(MemoryLayout<proc_vnodepathinfo>.size) else { return .unavailable }
+        let path = withUnsafeBytes(of: &info.pvi_cdir.vip_path) { raw -> String in
+            guard let base = raw.baseAddress else { return "" }
+            return String(cString: base.assumingMemoryBound(to: CChar.self))
+        }
+        return path.isEmpty ? .unavailable : .available(path)
     }
 
     private func readListeningPorts() -> [ProcessIdentity: [ListeningPort]]? {
@@ -173,7 +191,7 @@ final class ProcessCollector {
             guard var stored = rows[identity] else { continue }
             let value = ports[identity] ?? []
             let old = stored.row
-            stored.row = ProcessRow(id: old.id, name: old.name, cpuPercent: old.cpuPercent, memoryBytes: old.memoryBytes, energyProxyPercent: old.energyProxyPercent, ports: .available(value), missingRefreshCount: old.missingRefreshCount)
+            stored.row = ProcessRow(id: old.id, name: old.name, directory: old.directory, cpuPercent: old.cpuPercent, memoryBytes: old.memoryBytes, energyProxyPercent: old.energyProxyPercent, ports: .available(value), missingRefreshCount: old.missingRefreshCount)
             rows[identity] = stored
         }
     }

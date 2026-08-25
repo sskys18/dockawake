@@ -186,6 +186,26 @@ final class CoreBehaviorTests: XCTestCase {
         XCTAssertLessThan(rows.filter { $0.name == "Unknown" }.count, rows.count / 2)
     }
 
+    // Interpreter processes such as bun all report the same executable name, so
+    // the working directory is what identifies which project one is running.
+    func testProcessRowsCarryTheWorkingDirectory() {
+        let expected = FileManager.default.currentDirectoryPath
+        let mine = ProcessCollector().collect().first { $0.id.pid == getpid() }
+
+        guard case let .available(directory)? = mine?.directory else {
+            return XCTFail("Expected a working directory for the test process")
+        }
+        XCTAssertEqual(directory, expected)
+    }
+
+    func testHomeRelativePathShortensOnlyPathsUnderHome() {
+        let home = NSHomeDirectory()
+        XCTAssertEqual(DashboardFormat.homeRelativePath(home), "~")
+        XCTAssertEqual(DashboardFormat.homeRelativePath(home + "/Mine/dockawake"), "~/Mine/dockawake")
+        XCTAssertEqual(DashboardFormat.homeRelativePath("/usr/local"), "/usr/local")
+        XCTAssertEqual(DashboardFormat.homeRelativePath(home + "x/y"), home + "x/y")
+    }
+
     // libproc task times are mach units, not nanoseconds. Without the timebase
     // conversion a fully busy core reported roughly 1/42 of its real usage.
     func testProcessCPUUsesMachTimebaseSoBusyWorkIsNotUnderReported() {
