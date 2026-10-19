@@ -39,7 +39,7 @@ cd dockawake
 The installer:
 
 1. Builds `DockAwake.app`, the exact two-mode `dockawake-pmset` helper, and a temporary unprivileged RunCat remover locally
-2. Installs the app to `~/Applications/DockAwake.app`
+2. Installs the app to `/Applications/DockAwake.app`
 3. Installs the helper to `/Library/PrivilegedHelperTools/dockawake-pmset` (`root:wheel`)
 4. Adds a narrow NOPASSWD sudoers rule at `/etc/sudoers.d/dockawake`
 5. Discovers only cryptographically verified RunCat bundles under `~/Applications` and `/Applications`, discloses every match, and removes them after exact lowercase `yes` consent

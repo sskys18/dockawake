@@ -2,7 +2,7 @@
 # Uninstall DockAwake and restore normal sleep behavior.
 set -euo pipefail
 
-APP_DST="$HOME/Applications/DockAwake.app"
+APP_DST="/Applications/DockAwake.app"
 HELPER_DST="/Library/PrivilegedHelperTools/dockawake-pmset"
 SUDOERS_DST="/etc/sudoers.d/dockawake"
 

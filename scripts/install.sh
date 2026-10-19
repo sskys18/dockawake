@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build"
 HELPER_DST="/Library/PrivilegedHelperTools/dockawake-pmset"
 SUDOERS_DST="/etc/sudoers.d/dockawake"
-APP_DST="$HOME/Applications/DockAwake.app"
+APP_DST="/Applications/DockAwake.app"
 INSTALL_USER="$(id -un)"
 
 "$ROOT/scripts/build.sh"
