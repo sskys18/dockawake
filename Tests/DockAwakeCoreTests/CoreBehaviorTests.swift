@@ -355,14 +355,15 @@ final class CoreBehaviorTests: XCTestCase {
             CommandResult(status: 1, output: Data(), timedOut: false, exceededOutputLimit: false),
             CommandResult(status: 0, output: Data(" SleepDisabled 0\n".utf8), timedOut: false, exceededOutputLimit: false)
         ])
-        let scheduler = RecordingScheduler()
+        let scheduled = expectation(description: "retry scheduled")
+        let scheduler = RecordingScheduler { scheduled.fulfill() }
         let controller = KeepAwakeController(runner: runner, scheduler: scheduler) { _ in
             published.fulfill()
         }
 
         controller.setDesired(true)
 
-        wait(for: [published], timeout: 2)
+        wait(for: [published, scheduled], timeout: 2)
         XCTAssertEqual(runner.calls, [
             RecordingRunner.Call(
                 executable: "/usr/bin/sudo",
