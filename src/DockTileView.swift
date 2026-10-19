@@ -30,8 +30,8 @@ struct DockAlertTracker {
     }
 }
 
-/// Live Dock icon: a large CPU ring over three bars (memory, storage, battery),
-/// with a keep-awake marker. Values glide to each new sample.
+/// Live Dock icon: a 2x2 grid of rings (CPU, memory / storage, battery),
+/// with a keep-awake marker in the center. Values glide to each new sample.
 final class DockTileView: NSView {
     private struct Metric {
         let label: String
@@ -135,25 +135,21 @@ final class DockTileView: NSView {
         background.lineWidth = max(1, side / 128)
         background.stroke()
 
-        // CPU: the big ring in the top part of the tile.
-        let ringDiameter = unit * 0.5
-        let ringRect = NSRect(
-            x: tile.midX - ringDiameter / 2,
-            y: tile.maxY - unit * 0.07 - ringDiameter,
-            width: ringDiameter,
-            height: ringDiameter)
-        drawRing(metrics[0], in: ringRect)
-
-        // MEM, SSD, BAT: compact bars under the ring.
-        let barLeft = tile.minX + unit * 0.1
-        let barWidth = unit * 0.8
-        let rowHeight = unit * 0.115
-        let bottom = tile.minY + unit * 0.08
-        for row in 0..<3 {
-            let index = row + 1
-            let y = bottom + CGFloat(2 - row) * rowHeight
-            drawBar(metrics[index], label: label(at: index),
-                    in: NSRect(x: barLeft, y: y, width: barWidth, height: rowHeight))
+        // 2x2 grid, row-major from the top: CPU MEM / SSD BAT.
+        let padding = unit * 0.06
+        let cell = (unit - padding * 2) / 2
+        let ringDiameter = cell * 0.92
+        for index in metrics.indices {
+            let column = CGFloat(index % 2)
+            let row = CGFloat(index / 2)
+            let cellCenter = NSPoint(
+                x: tile.minX + padding + cell * (column + 0.5),
+                y: tile.maxY - padding - cell * (row + 0.5))
+            drawRing(metrics[index], label: label(at: index), in: NSRect(
+                x: cellCenter.x - ringDiameter / 2,
+                y: cellCenter.y - ringDiameter / 2,
+                width: ringDiameter,
+                height: ringDiameter))
         }
 
         if keepAwake {
@@ -161,7 +157,7 @@ final class DockTileView: NSView {
         }
     }
 
-    private func drawRing(_ metric: Metric, in rect: NSRect) {
+    private func drawRing(_ metric: Metric, label labelText: String, in rect: NSRect) {
         let lineWidth = rect.width * 0.13
         let radius = (rect.width - lineWidth) / 2
         let center = NSPoint(x: rect.midX, y: rect.midY)
@@ -183,11 +179,11 @@ final class DockTileView: NSView {
         }
 
         let value = NSAttributedString(string: metric.text, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: rect.width * 0.36, weight: .heavy),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: rect.width * 0.32, weight: .heavy),
             .foregroundColor: NSColor.white
         ])
-        let label = NSAttributedString(string: metric.label, attributes: [
-            .font: NSFont.systemFont(ofSize: rect.width * 0.14, weight: .bold),
+        let label = NSAttributedString(string: labelText, attributes: [
+            .font: NSFont.systemFont(ofSize: rect.width * 0.16, weight: .bold),
             .foregroundColor: NSColor.white.withAlphaComponent(0.55)
         ])
         let valueSize = value.size()
@@ -197,42 +193,10 @@ final class DockTileView: NSView {
         label.draw(at: NSPoint(x: center.x - labelSize.width / 2, y: top - valueSize.height - labelSize.height * 0.8))
     }
 
-    private func drawBar(_ metric: Metric, label labelText: String, in row: NSRect) {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: row.height * 0.72, weight: .bold)
-        let label = NSAttributedString(string: labelText, attributes: [
-            .font: font,
-            .foregroundColor: NSColor.white.withAlphaComponent(0.55)
-        ])
-        let value = NSAttributedString(string: metric.text, attributes: [
-            .font: font,
-            .foregroundColor: NSColor.white
-        ])
-        let labelWidth = row.width * 0.3
-        let valueWidth = row.width * 0.2
-        let textY = row.midY - label.size().height / 2
-        label.draw(at: NSPoint(x: row.minX, y: textY))
-        value.draw(at: NSPoint(x: row.maxX - value.size().width, y: textY))
-
-        let barHeight = row.height * 0.4
-        let track = NSRect(
-            x: row.minX + labelWidth,
-            y: row.midY - barHeight / 2,
-            width: row.width - labelWidth - valueWidth,
-            height: barHeight)
-        NSColor.white.withAlphaComponent(0.1).setFill()
-        NSBezierPath(roundedRect: track, xRadius: barHeight / 2, yRadius: barHeight / 2).fill()
-        if metric.target != nil, metric.shown > 0.005 {
-            var fill = track
-            fill.size.width = max(barHeight, track.width * metric.shown)
-            Self.color(for: metric.shown, highIsGood: metric.highIsGood).setFill()
-            NSBezierPath(roundedRect: fill, xRadius: barHeight / 2, yRadius: barHeight / 2).fill()
-        }
-    }
-
-    /// Amber cup in the top-left corner while sleep is disabled.
+    /// Amber cup in the gap between the four rings while sleep is disabled.
     private func drawKeepAwakeMarker(in tile: NSRect) {
-        let size = tile.width * 0.2
-        let rect = NSRect(x: tile.minX + tile.width * 0.05, y: tile.maxY - tile.width * 0.05 - size,
+        let size = tile.width * 0.17
+        let rect = NSRect(x: tile.midX - size / 2, y: tile.midY - size / 2,
                           width: size, height: size)
         NSColor(calibratedRed: 1.0, green: 0.74, blue: 0.2, alpha: 1).setFill()
         NSBezierPath(ovalIn: rect).fill()
