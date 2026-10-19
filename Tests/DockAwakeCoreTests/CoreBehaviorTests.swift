@@ -88,6 +88,43 @@ final class CoreBehaviorTests: XCTestCase {
 
         wait(for: [executed], timeout: 1)
     }
+    private func alertSnapshot(cpu: Double = 10, storage: Double = 30, battery: Double = 80,
+                               power: BatteryPower = .onBattery) -> SystemSummarySnapshot {
+        SystemSummarySnapshot(
+            timestamp: Date(),
+            cpu: .available(MetricDisplay(value: cpu, text: "")),
+            memory: .available(MetricDisplay(value: 50, text: "")),
+            storage: .available(MetricDisplay(value: storage, text: "")),
+            battery: .available(MetricDisplay(value: battery, text: "")),
+            batteryPower: .available(power))
+    }
+
+    func testDockAlertNeedsSustainedCPUAndFiresOnce() {
+        var tracker = DockAlertTracker()
+        XCTAssertFalse(tracker.update(with: alertSnapshot(cpu: 95)))
+        XCTAssertFalse(tracker.update(with: alertSnapshot(cpu: 95)))
+        XCTAssertNil(tracker.badge)
+        XCTAssertTrue(tracker.update(with: alertSnapshot(cpu: 95)))
+        XCTAssertEqual(tracker.badge, "CPU")
+        XCTAssertFalse(tracker.update(with: alertSnapshot(cpu: 95)))
+        XCTAssertFalse(tracker.update(with: alertSnapshot(cpu: 20)))
+        XCTAssertNil(tracker.badge)
+    }
+
+    func testDockAlertLowBatteryOnlyWhenUnplugged() {
+        var tracker = DockAlertTracker()
+        XCTAssertFalse(tracker.update(with: alertSnapshot(battery: 10, power: .charging)))
+        XCTAssertNil(tracker.badge)
+        XCTAssertTrue(tracker.update(with: alertSnapshot(battery: 10, power: .onBattery)))
+        XCTAssertEqual(tracker.badge, "BAT")
+    }
+
+    func testDockAlertFullStorage() {
+        var tracker = DockAlertTracker()
+        XCTAssertTrue(tracker.update(with: alertSnapshot(storage: 93)))
+        XCTAssertEqual(tracker.badge, "SSD")
+    }
+
     func testDockTileRendersFourGauges() {
         let tile = DockTileView(frame: NSRect(x: 0, y: 0, width: 128, height: 128))
         tile.update(with: SystemSummarySnapshot(

@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let scheduler = DispatchScheduler(queue: DispatchQueue(label: "com.dockawake.scheduler", qos: .utility))
     private var summaryController: SystemSummaryController?
     private var keepAwakeController: KeepAwakeController?
+    private var alertTracker = DockAlertTracker()
+    private var latestSnapshot: SystemSummarySnapshot?
+    private var keepAwakeState: KeepAwakeUIState?
     private var detailSession: DetailCollectionSession?
     private let containerCollector = ContainerCollector()
     private let launchAgentCollector = LaunchAgentCollector()
@@ -18,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.dockTile.contentView = dockTile
+        dockTile.onNeedsDockRefresh = { NSApp.dockTile.display() }
         NSApp.dockTile.display()
         NSApp.mainMenu = Self.makeMainMenu()
         configureControllers()
@@ -70,8 +74,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         summaryController = SystemSummaryController(scheduler: scheduler) { [weak self] snapshot in
             guard let self else { return }
+            self.latestSnapshot = snapshot
             self.dockTile.update(with: snapshot)
-            NSApp.dockTile.display()
+            if self.alertTracker.update(with: snapshot) {
+                NSApp.requestUserAttention(.informationalRequest)
+            }
+            NSApp.dockTile.badgeLabel = self.alertTracker.badge
             self.dockTile.setAccessibilityValue(Self.summaryAccessibilityText(snapshot))
         }
         keepAwakeController = KeepAwakeController(
@@ -80,7 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             publish: { [weak self] state in
                 guard let self else { return }
                 self.dashboard.updateKeepAwake(state)
-                _ = Self.keepAwakeText(state)
+                self.keepAwakeState = state
+                self.dockTile.keepAwake = state.current.value == true
             })
     }
 
@@ -131,8 +140,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let open = NSMenuItem(title: "Open Dashboard", action: #selector(openDashboard), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        let awake = NSMenuItem(title: "Keep Awake: \(Self.latestKeepAwakeText)", action: nil, keyEquivalent: "")
-        awake.isEnabled = false
+        menu.addItem(.separator())
+        if let snapshot = latestSnapshot {
+            for line in Self.summaryAccessibilityText(snapshot).components(separatedBy: ", ") {
+                let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+        }
+        let awake = NSMenuItem(title: "Keep Awake", action: #selector(toggleKeepAwake), keyEquivalent: "")
+        awake.target = self
+        switch keepAwakeState?.current {
+        case .available(true): awake.state = .on
+        case .available(false): awake.state = .off
+        case .unavailable, .unknown, .none:
+            awake.title = "Keep Awake: Unavailable"
+            awake.action = nil
+        }
+        if keepAwakeState?.pendingIntent != nil {
+            awake.title = "Keep Awake: Applying…"
+            awake.action = nil
+        }
         menu.addItem(awake)
         menu.addItem(.separator())
         let login = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
@@ -140,6 +169,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
         return menu
+    }
+
+    @objc private func toggleKeepAwake() {
+        guard case let .available(enabled) = keepAwakeState?.current else { return }
+        keepAwakeController?.setDesired(!enabled)
     }
 
     @objc private func toggleLoginItem() {
@@ -192,20 +226,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         detailSession = nil
         removeEscapeMonitor()
         keepAwakeController?.shutdownAndRestoreSleep()
-    }
-
-    private static var latestKeepAwakeText = "Unknown"
-
-    private static func keepAwakeText(_ state: KeepAwakeUIState) -> String {
-        let rendered: String
-        switch state.current {
-        case .available(true): rendered = "Enabled"
-        case .available(false): rendered = "Disabled"
-        case .unavailable: rendered = "Unavailable"
-        case .unknown: rendered = "Unknown"
-        }
-        latestKeepAwakeText = rendered
-        return rendered
     }
 
     private static func summaryAccessibilityText(_ snapshot: SystemSummarySnapshot) -> String {
