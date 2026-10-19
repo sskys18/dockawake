@@ -4,12 +4,11 @@ Run this checklist against a locally built `DockAwake.app` on an Apple silicon M
 
 ## Launch and locked UI
 
-- [ ] Launch the app. Confirm it remains an accessory menu bar app, with no Dock icon or ordinary application window.
-- [ ] Confirm the status item has the accessibility label `DockAwake system status` and its tooltip initially reports the keep-awake state.
-- [ ] Left-click the status item. Confirm one transient dashboard popover opens with Keep Awake, Power Assertions, Network, Public IP, and Processes cards.
+- [ ] Launch the app. Confirm it shows in the Dock (no menu bar item) and the Dock icon draws live CPU, MEM, SSD, and BAT ring gauges that refresh with the summary.
+- [ ] Click the Dock icon. Confirm one dashboard window opens with Keep Awake, Power Assertions, Network, Public IP, and Processes cards.
 - [ ] Confirm the dashboard process columns are Process, PID, CPU, Memory, Energy, and Ports, and columns cannot be reordered.
-- [ ] Press Escape, click outside, and left-click the status item again. Confirm each action closes the popover and reopening starts a fresh dashboard without duplicate popovers.
-- [ ] Right-click and Control-click the status item. Confirm the menu has Open Dashboard, a disabled current Keep Awake status, Start at Login, and Quit.
+- [ ] Press Escape or Command-W, then click the Dock icon again. Confirm each closes the window and reopening starts a fresh dashboard without duplicate windows.
+- [ ] Right-click the Dock icon. Confirm the menu has Open Dashboard, a disabled current Keep Awake status, Start at Login, and Quit.
 
 ## Lifecycle and keep-awake
 

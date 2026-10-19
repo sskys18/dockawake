@@ -1,10 +1,9 @@
 import AppKit
 import ServiceManagement
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let statusStrip = StatusStripView()
-    private let popover = NSPopover()
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private let dockTile = DockTileView(frame: NSRect(x: 0, y: 0, width: 128, height: 128))
+    private lazy var window: NSWindow = makeWindow()
     private let dashboard = DashboardViewController()
     private let scheduler = DispatchScheduler(queue: DispatchQueue(label: "com.dockawake.scheduler", qos: .utility))
     private var summaryController: SystemSummaryController?
@@ -15,49 +14,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let containerQueue = DispatchQueue(label: "com.dockawake.containers", qos: .userInitiated)
     private var detailGeneration: UInt64 = 0
     private var escapeMonitor: Any?
-    private var latestAwakeText = "Unknown"
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        configureStatusItem()
-        configurePopover()
+        NSApp.dockTile.contentView = dockTile
+        NSApp.dockTile.display()
+        NSApp.mainMenu = Self.makeMainMenu()
         configureControllers()
         installSignalHandlers()
         summaryController?.start()
         keepAwakeController?.adoptCurrentState()
     }
 
-    private func configureStatusItem() {
-        guard let button = statusItem.button else { return }
-        button.image = nil
-        button.attributedTitle = statusStrip.attributedTitle
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 9
-        button.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.92).cgColor
-        button.target = self
-        button.action = #selector(statusItemClicked)
-        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        statusItem.length = NSStatusItem.variableLength
-        refreshTooltip()
-        button.setAccessibilityLabel("DockAwake system status")
+    private static func makeMainMenu() -> NSMenu {
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Quit DockAwake", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        let main = NSMenu()
+        for (title, submenu) in [("DockAwake", appMenu), ("Window", windowMenu)] {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.submenu = submenu
+            main.addItem(item)
+        }
+        return main
     }
 
-    /// The tooltip is the only surface that can name each strip icon, so it
-    /// spells out every metric plus the current keep-awake state.
-    private func refreshTooltip() {
-        let lines = [
-            statusStrip.labeledSummary,
-            "Keep awake: \(latestAwakeText)",
-            "Click to open the dashboard"
-        ]
-        statusItem.button?.toolTip = lines.joined(separator: "\n")
-    }
-
-    private func configurePopover() {
-        popover.behavior = .transient
-        popover.animates = true
-        popover.delegate = self
-        popover.contentViewController = dashboard
+    private func makeWindow() -> NSWindow {
+        let window = NSWindow(contentViewController: dashboard)
+        window.title = "DockAwake"
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.isReleasedWhenClosed = false
+        window.setFrameAutosaveName("DockAwakeDashboard")
+        window.delegate = self
+        window.center()
+        return window
     }
 
     private func configureControllers() {
@@ -78,10 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         summaryController = SystemSummaryController(scheduler: scheduler) { [weak self] snapshot in
             guard let self else { return }
-            self.statusStrip.update(with: snapshot)
-            self.statusItem.button?.attributedTitle = self.statusStrip.attributedTitle
-            self.statusItem.button?.setAccessibilityValue(Self.summaryAccessibilityText(snapshot))
-            self.refreshTooltip()
+            self.dockTile.update(with: snapshot)
+            NSApp.dockTile.display()
+            self.dockTile.setAccessibilityValue(Self.summaryAccessibilityText(snapshot))
         }
         keepAwakeController = KeepAwakeController(
             runner: CommandRunner(),
@@ -89,35 +80,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             publish: { [weak self] state in
                 guard let self else { return }
                 self.dashboard.updateKeepAwake(state)
-                self.latestAwakeText = Self.keepAwakeText(state)
-                self.refreshTooltip()
+                _ = Self.keepAwakeText(state)
             })
     }
 
-    @objc private func statusItemClicked() {
-        let event = NSApp.currentEvent
-        if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
-            popover.performClose(nil)
-            showMenu()
-        } else {
-            toggleDashboard()
-        }
+    /// Clicking the Dock icon opens the dashboard window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openDashboard()
+        return false
     }
 
-    private func toggleDashboard() {
-        guard let button = statusItem.button else { return }
-        if popover.isShown {
-            popover.performClose(nil)
-            return
-        }
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        startDetailSession()
-        installEscapeMonitor()
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     @objc private func openDashboard() {
-        guard !popover.isShown else { return }
-        toggleDashboard()
+        if !window.isVisible || window.isMiniaturized {
+            if detailSession == nil { startDetailSession() }
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        installEscapeMonitor()
     }
 
     private func startDetailSession() {
@@ -142,12 +126,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         session.start()
     }
 
-    private func showMenu() {
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
         let open = NSMenuItem(title: "Open Dashboard", action: #selector(openDashboard), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        let awake = NSMenuItem(title: "Keep Awake: \(Self.keepAwakeTextFromDashboard())", action: nil, keyEquivalent: "")
+        let awake = NSMenuItem(title: "Keep Awake: \(Self.latestKeepAwakeText)", action: nil, keyEquivalent: "")
         awake.isEnabled = false
         menu.addItem(awake)
         menu.addItem(.separator())
@@ -155,13 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
-        statusItem.menu = menu
-        statusItem.button?.performClick(nil)
-        statusItem.menu = nil
+        return menu
     }
 
     @objc private func toggleLoginItem() {
@@ -172,11 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    @objc private func quit() {
-        NSApp.terminate(nil)
-    }
-
-    func popoverDidClose(_ notification: Notification) {
+    func windowWillClose(_ notification: Notification) {
         detailSession?.stop()
         detailSession = nil
         dashboard.clearDetail()
@@ -186,8 +160,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func installEscapeMonitor() {
         removeEscapeMonitor()
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53, self?.popover.isShown == true {
-                self?.popover.performClose(nil)
+            if event.keyCode == 53, let window = self?.window, window.isKeyWindow {
+                window.performClose(nil)
                 return nil
             }
             return event
@@ -232,10 +206,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         latestKeepAwakeText = rendered
         return rendered
-    }
-
-    private static func keepAwakeTextFromDashboard() -> String {
-        latestKeepAwakeText
     }
 
     private static func summaryAccessibilityText(_ snapshot: SystemSummarySnapshot) -> String {

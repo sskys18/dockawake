@@ -52,4 +52,4 @@ echo "==> Optional RunCat migration"
 echo "==> Launching DockAwake"
 open "$APP_DST"
 
-echo "Done. Left-click the DockAwake menu-bar status strip to open the dashboard."
+echo "Done. Click the DockAwake Dock icon to open the dashboard."

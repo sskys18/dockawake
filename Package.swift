@@ -29,7 +29,7 @@ let package = Package(
                 "ProcessCollector.swift",
                 "PublicIPClient.swift",
                 "Scheduler.swift",
-                "StatusStripView.swift",
+                "DockTileView.swift",
                 "SystemSummaryCollector.swift"
             ],
             linkerSettings: [

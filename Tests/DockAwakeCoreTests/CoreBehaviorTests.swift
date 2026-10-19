@@ -88,31 +88,20 @@ final class CoreBehaviorTests: XCTestCase {
 
         wait(for: [executed], timeout: 1)
     }
-    func testStatusStripBuildsExactlyFourIconValuePairs() {
-        let strip = StatusStripView()
-        var attachmentCount = 0
-        strip.attributedTitle.enumerateAttribute(
-            .attachment,
-            in: NSRange(location: 0, length: strip.attributedTitle.length)
-        ) { value, _, _ in
-            if value != nil { attachmentCount += 1 }
-        }
-        XCTAssertEqual(attachmentCount, 4)
-
-        strip.update(with: SystemSummarySnapshot(
+    func testDockTileRendersFourGauges() {
+        let tile = DockTileView(frame: NSRect(x: 0, y: 0, width: 128, height: 128))
+        tile.update(with: SystemSummarySnapshot(
             timestamp: Date(),
             cpu: .available(MetricDisplay(value: 10, text: "10%")),
-            memory: .available(MetricDisplay(value: 20, text: "20%")),
-            storage: .available(MetricDisplay(value: 30, text: "30%")),
+            memory: .available(MetricDisplay(value: 20.4, text: "20%")),
+            storage: .unavailable,
             battery: .available(MetricDisplay(value: 40, text: "40%"))
         ))
-        let rendered = strip.attributedTitle.string
-        for value in ["10%", "20%", "30%", "40%"] {
-            XCTAssertTrue(rendered.contains(value))
-        }
+        XCTAssertEqual(tile.renderedGauges, ["CPU 10", "MEM 20", "SSD –", "BAT 40"])
     }
-    func testStatusStripReflectsChargerStateWithoutPercentChange() {
-        let strip = StatusStripView()
+
+    func testDockTileReflectsChargerStateWithoutPercentChange() {
+        let tile = DockTileView(frame: NSRect(x: 0, y: 0, width: 128, height: 128))
         func snapshot(_ power: BatteryPower) -> SystemSummarySnapshot {
             SystemSummarySnapshot(
                 timestamp: Date(),
@@ -123,14 +112,12 @@ final class CoreBehaviorTests: XCTestCase {
                 batteryPower: .available(power))
         }
 
-        strip.update(with: snapshot(.onBattery))
-        XCTAssertTrue(strip.labeledSummary.contains("Battery charge, on battery: 40%"))
-
-        strip.update(with: snapshot(.charging))
-        XCTAssertTrue(strip.labeledSummary.contains("Battery charge, charging: 40%"))
-
-        strip.update(with: snapshot(.pluggedNotCharging))
-        XCTAssertTrue(strip.labeledSummary.contains("Battery charge, plugged in: 40%"))
+        tile.update(with: snapshot(.onBattery))
+        XCTAssertEqual(tile.renderedGauges.last, "BAT 40")
+        tile.update(with: snapshot(.charging))
+        XCTAssertEqual(tile.renderedGauges.last, "⚡︎BAT 40")
+        tile.update(with: snapshot(.pluggedNotCharging))
+        XCTAssertEqual(tile.renderedGauges.last, "AC 40")
     }
 
     func testLiveBatteryReportsChargerState() {
