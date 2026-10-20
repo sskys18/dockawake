@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 private struct TextColumn {
     let title: String
@@ -148,13 +149,14 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     private let awakeSwitch = NSSwitch()
     private let awakeStateLabel = NSTextField(labelWithString: "Unknown")
-    private let publicIPLabel = NSTextField(labelWithString: "Unavailable")
     private let updatedLabel = NSTextField(labelWithString: "")
-    private let networkSummaryLabel = NSTextField(labelWithString: "N/A")
+    private let overview = OverviewModel()
+    private let sectionControl = NSSegmentedControl()
+    private let sectionTabs = NSTabView()
     private var assertionsByPID: [Int32: PowerAssertionRow] = [:]
     private let processTable = NSTableView()
     private var processRows: [ProcessRow] = []
-    private var processSort = NSSortDescriptor(key: "2", ascending: false)
+    private var processSort = NSSortDescriptor(key: "3", ascending: false)
 
     private let containerTable = TextTableView(
         columns: [
@@ -168,9 +170,6 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         visibleRows: 5,
         allowsSelection: true)
     private let containerSummaryLabel = NSTextField(labelWithString: "")
-    private var containersTabItem: NSTabViewItem?
-    private var processesTabItem: NSTabViewItem?
-    private var launchAgentsTabItem: NSTabViewItem?
     private let containerStopButton = NSButton(title: "Stop Selected", target: nil, action: nil)
     private var containerRows: [ContainerRow] = []
 
@@ -194,69 +193,90 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         view = root
-        preferredContentSize = NSSize(width: 1240, height: 720)
+        preferredContentSize = NSSize(width: 1240, height: 860)
 
+        // The only control that changes a system setting stays in the header so
+        // it is reachable no matter which section is selected.
         awakeSwitch.target = self
         awakeSwitch.action = #selector(awakeSwitchChanged)
         awakeSwitch.setAccessibilityLabel("Keep awake")
+        awakeSwitch.toolTip = "Stops this Mac from sleeping, including with the lid closed. Quitting DockAwake always restores normal sleep."
         awakeStateLabel.setAccessibilityLabel("Keep-awake state")
-        awakeStateLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
+        awakeStateLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        awakeStateLabel.lineBreakMode = .byTruncatingTail
+        awakeStateLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let awakeIcon = NSImageView(image: NSImage(systemSymbolName: "cup.and.saucer.fill", accessibilityDescription: nil) ?? NSImage())
+        awakeIcon.contentTintColor = LoadPalette.amber
         let awakeTitle = NSTextField(labelWithString: "Keep Awake")
         awakeTitle.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        let awakeRow = NSStackView(views: [awakeTitle, awakeSwitch, awakeStateLabel])
+        let awakeRow = NSStackView(views: [awakeStateLabel, awakeIcon, awakeTitle, awakeSwitch])
         awakeRow.orientation = .horizontal
         awakeRow.alignment = .centerY
-        awakeRow.spacing = 10
-        // The only control that changes a system setting stays outside the tabs so
-        // it is reachable no matter which tab is selected.
-        publicIPLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        publicIPLabel.setAccessibilityLabel("Public IP")
-        networkSummaryLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        networkSummaryLabel.setAccessibilityLabel("Network throughput")
-        let networkRow = NSStackView(views: [
-            secondary("Network"),
-            networkSummaryLabel,
-            secondary("Public IP"),
-            publicIPLabel
-        ])
-        networkRow.orientation = .horizontal
-        networkRow.alignment = .firstBaseline
-        networkRow.spacing = 8
-        let header = NSStackView(views: [
-            awakeRow,
-            caption("Stops this Mac from sleeping, including with the lid closed. This is the only switch that changes the system setting; quitting DockAwake always restores normal sleep."),
-            networkRow
-        ])
-        header.orientation = .vertical
-        header.alignment = .leading
-        header.spacing = 4
-        header.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
-        header.wantsLayer = true
-        header.layer?.cornerRadius = 10
-        header.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        header.layer?.borderWidth = 1
-        header.layer?.borderColor = NSColor.separatorColor.cgColor
+        awakeRow.spacing = 8
+
+        sectionControl.segmentCount = DashboardSection.allCases.count
+        sectionControl.trackingMode = .selectOne
+        sectionControl.segmentStyle = .automatic
+        sectionControl.controlSize = .large
+        for section in DashboardSection.allCases {
+            sectionControl.setLabel(section.title, forSegment: section.rawValue)
+        }
+        sectionControl.target = self
+        sectionControl.action = #selector(sectionChanged)
+        sectionControl.setAccessibilityLabel("Dashboard sections")
+
+        let header = NSStackView(views: [sectionControl, NSView(), awakeRow])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 12
         header.translatesAutoresizingMaskIntoConstraints = false
 
-        let tabView = NSTabView()
-        tabView.translatesAutoresizingMaskIntoConstraints = false
-        tabView.addTabViewItem(makeProcessesTab())
-        tabView.addTabViewItem(makeContainersTab())
-        tabView.addTabViewItem(makeLaunchAgentsTab())
-        tabView.setAccessibilityLabel("Dashboard sections")
-        tabView.selectFirstTabViewItem(nil)
+        overview.onNavigate = { [weak self] section in self?.select(section) }
+        let overviewItem = NSTabViewItem(identifier: DashboardSection.overview)
+        let overviewHost = NSHostingView(rootView: OverviewView(model: overview))
+        // The tab view sizes the page. Letting the hosting view publish its
+        // ideal content height as an intrinsic size makes the scroll view start
+        // at the bottom and fights the window's own frame.
+        overviewHost.sizingOptions = []
+        overviewItem.view = overviewHost
+        sectionTabs.tabViewType = .noTabsNoBorder
+        sectionTabs.drawsBackground = false
+        sectionTabs.translatesAutoresizingMaskIntoConstraints = false
+        sectionTabs.addTabViewItem(overviewItem)
+        sectionTabs.addTabViewItem(makeProcessesTab())
+        sectionTabs.addTabViewItem(makeContainersTab())
+        sectionTabs.addTabViewItem(makeLaunchAgentsTab())
+        select(.overview)
+
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
 
         root.addSubview(header)
-        root.addSubview(tabView)
+        root.addSubview(separator)
+        root.addSubview(sectionTabs)
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: root.topAnchor, constant: 14),
-            header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
-            header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
-            tabView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
-            tabView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            tabView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
-            tabView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12)
+            header.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+            header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 18),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -18),
+            separator.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
+            separator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            sectionTabs.topAnchor.constraint(equalTo: separator.bottomAnchor),
+            sectionTabs.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sectionTabs.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            sectionTabs.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         ])
+    }
+
+    private func select(_ section: DashboardSection) {
+        sectionControl.selectedSegment = section.rawValue
+        sectionTabs.selectTabViewItem(at: section.rawValue)
+    }
+
+    @objc private func sectionChanged() {
+        guard let section = DashboardSection(rawValue: sectionControl.selectedSegment) else { return }
+        select(section)
     }
 
     private func makeContainersTab() -> NSTabViewItem {
@@ -265,13 +285,11 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         controls.orientation = .horizontal
         controls.alignment = .centerY
         controls.spacing = 10
-        let item = NSTabViewItem(identifier: "containers")
-        item.label = "Containers"
+        let item = NSTabViewItem(identifier: DashboardSection.containers)
         item.view = page(
             "Containers on the local Docker-compatible runtime. Select one or more rows (Shift or Command click) and press Stop Selected to shut them down through the runtime's own graceful stop; nothing here is killed outright.",
             fill: containerTable,
             footer: controls)
-        containersTabItem = item
         return item
     }
 
@@ -294,25 +312,21 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         tableScroll.setAccessibilityLabel("Process usage")
         updatedLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         updatedLabel.textColor = .secondaryLabelColor
-        let item = NSTabViewItem(identifier: "processes")
-        item.label = "Processes"
+        let item = NSTabViewItem(identifier: DashboardSection.processes)
         item.view = page(
             "What is using this Mac right now. Click any column heading to sort; unavailable values always sort last. CPU is per core, so 100% means one full core of \(ProcessInfo.processInfo.activeProcessorCount) available.",
             fill: tableScroll,
             footer: updatedLabel)
-        processesTabItem = item
         return item
     }
 
     private func makeLaunchAgentsTab() -> NSTabViewItem {
         configureLaunchAgentCard()
-        let item = NSTabViewItem(identifier: "launchAgents")
-        item.label = "LaunchAgents"
+        let item = NSTabViewItem(identifier: DashboardSection.launchAgents)
         item.view = page(
             "Every non-Apple launchd job in your user domain: the property lists in ~/Library/LaunchAgents plus every other non-Apple job loaded in your user domain, which writes no file there. Invalid marks a file launchd would reject because it carries no Label. Read-only: DockAwake never loads, unloads, or edits a job.",
             fill: launchAgentTable,
             footer: launchAgentSummaryLabel)
-        launchAgentsTabItem = item
         return item
     }
 
@@ -328,24 +342,24 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         container.addSubview(captionLabel)
         container.addSubview(fill)
         var constraints: [NSLayoutConstraint] = [
-            captionLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            captionLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            captionLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            captionLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+            captionLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            captionLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18),
             fill.topAnchor.constraint(equalTo: captionLabel.bottomAnchor, constant: 10),
-            fill.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            fill.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12)
+            fill.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            fill.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18)
         ]
         if let footer {
             footer.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(footer)
             constraints += [
                 footer.topAnchor.constraint(equalTo: fill.bottomAnchor, constant: 8),
-                footer.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-                footer.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
-                footer.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12)
+                footer.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+                footer.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -18),
+                footer.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14)
             ]
         } else {
-            constraints.append(fill.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12))
+            constraints.append(fill.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14))
         }
         NSLayoutConstraint.activate(constraints)
         return container
@@ -358,8 +372,16 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         return label
     }
 
+    /// Fed on every summary pass, open window or not, so the Overview charts
+    /// already hold history when the window appears.
+    func updateSummary(_ snapshot: SystemSummarySnapshot) {
+        precondition(Thread.isMainThread)
+        overview.update(summary: snapshot)
+    }
+
     func updateKeepAwake(_ state: KeepAwakeUIState) {
         precondition(Thread.isMainThread)
+        overview.update(keepAwake: state)
         let stateText: String
         switch state.current {
         case .available(true):
@@ -397,18 +419,12 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     func updateDetail(_ snapshot: DetailSnapshot) {
         precondition(Thread.isMainThread)
-        updateNetworkSummary(snapshot.interfaces)
+        overview.update(detail: snapshot)
         assertionsByPID = Dictionary(
             snapshot.powerAssertions.compactMap { assertion in
                 assertion.ownerPID.map { ($0, assertion) }
             },
             uniquingKeysWith: { first, _ in first })
-        switch snapshot.publicIP {
-        case let .available(address): publicIPLabel.stringValue = address
-        case .unavailable: publicIPLabel.stringValue = "Unavailable"
-        case .unknown: publicIPLabel.stringValue = "Checking…"
-        }
-        publicIPLabel.setAccessibilityValue(publicIPLabel.stringValue)
         updateContainers(snapshot.containers)
         updateLaunchAgents(snapshot.launchAgents)
         processRows = snapshot.processes
@@ -423,9 +439,8 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     func clearDetail() {
         precondition(Thread.isMainThread)
+        overview.clearDetail()
         assertionsByPID.removeAll()
-        networkSummaryLabel.stringValue = "N/A"
-        publicIPLabel.stringValue = "Unavailable"
         updatedLabel.stringValue = ""
         containerRows.removeAll()
         containerTable.update([])
@@ -439,26 +454,13 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         setTabCounts(containers: nil, processes: nil, launchAgents: nil)
     }
 
-    /// Sums only interfaces that actually carry an address. The two dozen empty
-    /// virtual interfaces macOS creates would otherwise bury the real number.
-    private func updateNetworkSummary(_ interfaces: [NetworkInterfaceSnapshot]) {
-        let active = interfaces.filter { !$0.addresses.isEmpty && $0.name != "lo0" }
-        let down = active.compactMap(\.receivedRateBytesPerSecond.value).reduce(0, +)
-        let up = active.compactMap(\.sentRateBytesPerSecond.value).reduce(0, +)
-        guard !active.isEmpty else {
-            networkSummaryLabel.stringValue = "N/A"
-            return
-        }
-        networkSummaryLabel.stringValue = "↓ \(DashboardFormat.rate(down))   ↑ \(DashboardFormat.rate(up))"
-        networkSummaryLabel.setAccessibilityValue(networkSummaryLabel.stringValue)
-    }
-
     /// The container count is deliberately the running count, not the total:
     /// stopped containers cost nothing and are not what the tab is warning about.
     private func setTabCounts(containers: Int?, processes: Int?, launchAgents: Int?) {
-        containersTabItem?.label = Self.tabLabel("Containers", count: containers)
-        processesTabItem?.label = Self.tabLabel("Processes", count: processes)
-        launchAgentsTabItem?.label = Self.tabLabel("LaunchAgents", count: launchAgents)
+        let counts: [DashboardSection: Int?] = [.processes: processes, .containers: containers, .launchAgents: launchAgents]
+        for (section, count) in counts {
+            sectionControl.setLabel(Self.tabLabel(section.title, count: count), forSegment: section.rawValue)
+        }
     }
 
     private static func tabLabel(_ title: String, count: Int?) -> String {
@@ -581,14 +583,15 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     private func configureProcessTable() {
         let columns: [TextColumn] = [
-            TextColumn(title: "Process", width: 250, alignment: .left, help: "Executable name. An (exited) suffix marks a process that just disappeared."),
+            TextColumn(title: "Process", width: 250, alignment: .left, help: "Executable name. Interpreters such as bun, node, and python show the script they run, for example gjc (bun). An (exited) suffix marks a process that just disappeared."),
             TextColumn(title: "Directory", width: 260, alignment: .left, help: "Working directory the process was launched in. Tells apart interpreter processes such as bun that all share one executable name. N/A means the process is not owned by you."),
             TextColumn(title: "PID", width: 66, alignment: .right, help: "Process ID assigned by macOS."),
             TextColumn(title: "CPU", width: 78, alignment: .right, help: "Share of one CPU core. 100% is one full core, so multi-threaded work exceeds 100%."),
             TextColumn(title: "Memory", width: 100, alignment: .right, help: "Physical memory footprint of the process."),
             TextColumn(title: "Energy", width: 90, alignment: .right, help: "CPU use spread across all cores. A rough energy hint only, not Activity Monitor Energy Impact."),
             TextColumn(title: "Ports", width: 240, alignment: .left, help: "TCP ports this process is listening on. None means it accepts no connections."),
-            TextColumn(title: "Awake", width: 210, alignment: .left, help: "The power assertion this process holds to stop the Mac sleeping, if any. Hover for the reason it gave macOS.")
+            TextColumn(title: "Awake", width: 210, alignment: .left, help: "The power assertion this process holds to stop the Mac sleeping, if any. Hover for the reason it gave macOS."),
+            TextColumn(title: "Command", width: 420, alignment: .left, help: "Full command line. N/A means the process is not owned by you.")
         ]
         for (index, column) in columns.enumerated() {
             let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("process.\(index)"))
@@ -635,6 +638,8 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
             return row.ports.value?.isEmpty == false ? .systemBlue : .labelColor
         case 7:
             return assertionsByPID[row.id.pid] == nil ? .labelColor : .systemOrange
+        case 8:
+            return row.arguments.value == nil ? .secondaryLabelColor : .labelColor
         default:
             return .labelColor
         }
@@ -651,7 +656,6 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         cell.textField?.alignment = processColumnAlignments.indices.contains(index) ? processColumnAlignments[index] : .left
         cell.textField?.textColor = processCellColor(processRows[row], column: index)
         cell.textField?.setAccessibilityLabel("\(tableColumn.title): \(value)")
-        cell.toolTip = value
         return cell
     }
 
@@ -679,13 +683,14 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     private func processText(_ row: ProcessRow, column: Int) -> String {
         switch column {
-        case 0: return row.isRetainedMissing ? "\(row.name) (exited)" : row.name
+        case 0: return row.isRetainedMissing ? "\(row.displayName) (exited)" : row.displayName
         case 1: return row.directoryText
         case 2: return String(row.id.pid)
         case 3: return row.cpuText
         case 4: return row.memoryText
         case 5: return row.energyProxyText
         case 7: return assertionsByPID[row.id.pid]?.type ?? ""
+        case 8: return row.commandText
         default:
             switch row.ports {
             case let .available(ports): return ports.isEmpty ? "None" : ports.map(\.displayText).joined(separator: ", ")
@@ -712,6 +717,9 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         case 6:
             if case .available = row.ports { return false }
             return true
+        case 8:
+            if case .available = row.arguments { return false }
+            return true
         default:
             break
         }
@@ -720,13 +728,13 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     private func compare(_ left: ProcessRow, _ right: ProcessRow, column: Int) -> ComparisonResult {
         switch column {
-        case 0: return left.name.localizedStandardCompare(right.name)
+        case 0: return left.displayName.localizedStandardCompare(right.displayName)
         case 1: return left.directoryText.localizedStandardCompare(right.directoryText)
         case 2: return left.id.pid == right.id.pid ? .orderedSame : (left.id.pid < right.id.pid ? .orderedAscending : .orderedDescending)
         case 3: return compare(left.cpuPercent, right.cpuPercent)
         case 4: return compare(left.memoryBytes, right.memoryBytes)
         case 5: return compare(left.energyProxyPercent, right.energyProxyPercent)
-        case 7: return processText(left, column: 7).localizedStandardCompare(processText(right, column: 7))
+        case 7, 8: return processText(left, column: column).localizedStandardCompare(processText(right, column: column))
         default: return processText(left, column: 6).localizedStandardCompare(processText(right, column: 6))
         }
     }
@@ -741,12 +749,6 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         case (.unavailable, .unknown): return .orderedDescending
         default: return .orderedSame
         }
-    }
-
-    private func secondary(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.textColor = .secondaryLabelColor
-        return label
     }
 
     private static let timeFormatter: DateFormatter = {

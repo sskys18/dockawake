@@ -37,7 +37,8 @@ final class SystemSummaryCollector: SystemSummaryCollecting {
         let totalDelta = current.total - previous.total
         guard totalDelta > 0, busyDelta <= totalDelta else { return .unavailable }
         let percent = Double(busyDelta) * 100 / Double(totalDelta)
-        return .available(MetricDisplay(value: percent, text: DashboardFormat.percent(percent)))
+        let cores = ProcessInfo.processInfo.activeProcessorCount
+        return .available(MetricDisplay(value: percent, text: DashboardFormat.percent(percent), detail: "\(cores) cores"))
     }
 
     private func memoryMetric() -> Availability<MetricDisplay> {
@@ -58,7 +59,10 @@ final class SystemSummaryCollector: SystemSummaryCollecting {
         let total = ProcessInfo.processInfo.physicalMemory
         guard !used.overflow, total > 0 else { return .unavailable }
         let percent = Double(used.partialValue) * 100 / Double(total)
-        return .available(MetricDisplay(value: percent, text: DashboardFormat.percent(percent)))
+        return .available(MetricDisplay(
+            value: percent,
+            text: DashboardFormat.percent(percent),
+            detail: "\(DashboardFormat.bytes(used.partialValue)) of \(DashboardFormat.bytes(total))"))
     }
 
     private func storageMetric() -> Availability<MetricDisplay> {
@@ -70,7 +74,10 @@ final class SystemSummaryCollector: SystemSummaryCollecting {
             return .unavailable
         }
         let percent = Double(total - available) * 100 / Double(total)
-        return .available(MetricDisplay(value: percent, text: DashboardFormat.percent(percent)))
+        return .available(MetricDisplay(
+            value: percent,
+            text: DashboardFormat.percent(percent),
+            detail: "\(DashboardFormat.bytes(UInt64(available))) free of \(DashboardFormat.bytes(UInt64(total)))"))
     }
 
     private func batteryMetric() -> (charge: Availability<MetricDisplay>, power: Availability<BatteryPower>) {

@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.title = "DockAwake"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
+        window.contentMinSize = NSSize(width: 1100, height: 620)
         window.setFrameAutosaveName("DockAwakeDashboard")
         window.delegate = self
         window.center()
@@ -76,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             self.latestSnapshot = snapshot
             self.dockTile.update(with: snapshot)
+            self.dashboard.updateSummary(snapshot)
             if self.alertTracker.update(with: snapshot) {
                 NSApp.requestUserAttention(.informationalRequest)
             }
