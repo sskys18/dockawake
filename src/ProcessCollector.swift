@@ -11,6 +11,7 @@ final class ProcessCollector {
         var row: ProcessRow
         var totalCPUTime: UInt64?
         var directory: Availability<String>
+        var arguments: Availability<[String]>
         var sampledAt: TimeInterval
     }
 
@@ -55,12 +56,13 @@ final class ProcessCollector {
                     id: identity,
                     name: prior?.row.name ?? "Unknown",
                     directory: prior?.directory ?? .unavailable,
+                    arguments: prior?.arguments ?? .unavailable,
                     cpuPercent: .unavailable,
                     memoryBytes: .unavailable,
                     energyProxyPercent: .unavailable,
                     ports: .unavailable,
                     missingRefreshCount: 0)
-                next[identity] = StoredRow(row: row, totalCPUTime: nil, directory: prior?.directory ?? .unavailable, sampledAt: now)
+                next[identity] = StoredRow(row: row, totalCPUTime: nil, directory: prior?.directory ?? .unavailable, arguments: prior?.arguments ?? .unavailable, sampledAt: now)
                 continue
             }
             guard confirmedIdentity == identity else { continue }
@@ -79,17 +81,18 @@ final class ProcessCollector {
             if case let .available(value) = cpu {
                 energy = .available(min(100, max(0, value / Double(processorCount))))
             } else { energy = .unavailable }
-            // The working directory is read once per process identity and then
-            // reused, so the per-refresh cost stays at one syscall per new PID.
+            // The working directory and argv are read once per process identity
+            // and then reused, so the per-refresh cost stays at two syscalls per new PID.
             let directory = prior?.directory ?? workingDirectory(for: identity.pid)
-            let row = ProcessRow(id: identity, name: sample.name, directory: directory, cpuPercent: cpu, memoryBytes: memory, energyProxyPercent: energy, ports: .unavailable, missingRefreshCount: 0)
-            next[identity] = StoredRow(row: row, totalCPUTime: sample.totalCPUTime, directory: directory, sampledAt: now)
+            let arguments = prior?.arguments ?? Self.arguments(for: identity.pid)
+            let row = ProcessRow(id: identity, name: sample.name, directory: directory, arguments: arguments, cpuPercent: cpu, memoryBytes: memory, energyProxyPercent: energy, ports: .unavailable, missingRefreshCount: 0)
+            next[identity] = StoredRow(row: row, totalCPUTime: sample.totalCPUTime, directory: directory, arguments: arguments, sampledAt: now)
         }
 
         for (identity, stored) in rows where !identitySet.contains(identity) {
             guard stored.row.missingRefreshCount == 0 else { continue }
-            let retained = ProcessRow(id: identity, name: stored.row.name, directory: stored.directory, cpuPercent: .unavailable, memoryBytes: .unavailable, energyProxyPercent: .unavailable, ports: .unavailable, missingRefreshCount: 1)
-            next[identity] = StoredRow(row: retained, totalCPUTime: nil, directory: stored.directory, sampledAt: now)
+            let retained = ProcessRow(id: identity, name: stored.row.name, directory: stored.directory, arguments: stored.arguments, cpuPercent: .unavailable, memoryBytes: .unavailable, energyProxyPercent: .unavailable, ports: .unavailable, missingRefreshCount: 1)
+            next[identity] = StoredRow(row: retained, totalCPUTime: nil, directory: stored.directory, arguments: stored.arguments, sampledAt: now)
         }
         rows = next
         mergePorts(readListeningPorts(), into: identitySet)
@@ -146,6 +149,37 @@ final class ProcessCollector {
         return path.isEmpty ? .unavailable : .available(path)
     }
 
+    /// argv from KERN_PROCARGS2: an int32 argc, the executable path, NUL
+    /// padding, then argc NUL-terminated arguments. The kernel refuses this for
+    /// processes the user does not own, which reports as unavailable.
+    static func arguments(for pid: pid_t) -> Availability<[String]> {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return .unavailable }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return .unavailable }
+        return parseProcArgs(Array(buffer.prefix(size)))
+    }
+
+    static func parseProcArgs(_ buffer: [UInt8]) -> Availability<[String]> {
+        let header = MemoryLayout<Int32>.size
+        guard buffer.count > header else { return .unavailable }
+        let argc = buffer.prefix(header).withUnsafeBytes { Int($0.loadUnaligned(as: Int32.self)) }
+        guard argc > 0 else { return .unavailable }
+        var index = header
+        // Skip the executable path and the NUL padding after it.
+        while index < buffer.count, buffer[index] != 0 { index += 1 }
+        while index < buffer.count, buffer[index] == 0 { index += 1 }
+        var arguments: [String] = []
+        while arguments.count < argc, index < buffer.count {
+            let start = index
+            while index < buffer.count, buffer[index] != 0 { index += 1 }
+            arguments.append(String(decoding: buffer[start..<index], as: UTF8.self))
+            index += 1
+        }
+        return arguments.count == argc ? .available(arguments) : .unavailable
+    }
+
     private func readListeningPorts() -> [ProcessIdentity: [ListeningPort]]? {
         let result = runner.run(executable: "/usr/sbin/lsof", arguments: ["-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-F0pcfPnT"], outputLimit: 1_048_576, timeout: 5)
         guard result.succeeded, let text = String(data: result.output, encoding: .utf8), text.isEmpty || text.hasSuffix("\n") else { return nil }
@@ -191,7 +225,7 @@ final class ProcessCollector {
             guard var stored = rows[identity] else { continue }
             let value = ports[identity] ?? []
             let old = stored.row
-            stored.row = ProcessRow(id: old.id, name: old.name, directory: old.directory, cpuPercent: old.cpuPercent, memoryBytes: old.memoryBytes, energyProxyPercent: old.energyProxyPercent, ports: .available(value), missingRefreshCount: old.missingRefreshCount)
+            stored.row = ProcessRow(id: old.id, name: old.name, directory: old.directory, arguments: old.arguments, cpuPercent: old.cpuPercent, memoryBytes: old.memoryBytes, energyProxyPercent: old.energyProxyPercent, ports: .available(value), missingRefreshCount: old.missingRefreshCount)
             rows[identity] = stored
         }
     }

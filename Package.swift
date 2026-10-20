@@ -15,6 +15,7 @@ let package = Package(
                 "Info.plist",
                 "dockawake-pmset.c",
                 "main.swift",
+                "OverviewView.swift",
                 "runcat-safe-remove.c"
             ],
             sources: [

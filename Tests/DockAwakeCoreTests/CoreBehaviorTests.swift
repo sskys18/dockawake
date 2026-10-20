@@ -36,6 +36,81 @@ final class CoreBehaviorTests: XCTestCase {
         XCTAssertEqual(interface.sentRateText, "N/A")
     }
 
+    func testInterpreterProcessesAreLabelledByTheScriptTheyRun() {
+        let gjc = "/Users/me/.bun/bin/gjc"
+        XCTAssertEqual(ProcessLabel.displayName(name: "bun", arguments: ["bun", gjc, "--mpreset", "hybrid-default"]), "gjc (bun)")
+        XCTAssertEqual(ProcessLabel.displayName(name: "bun", arguments: ["bun", gjc, "sdk", "session", "raw"]), "gjc sdk (bun)")
+        XCTAssertEqual(ProcessLabel.displayName(name: "bun", arguments: ["bun", "run", "dev"]), "dev (bun)")
+        XCTAssertEqual(ProcessLabel.displayName(name: "node", arguments: ["node", "/app/server/dist/index.js"]), "server (node)")
+        XCTAssertEqual(ProcessLabel.displayName(name: "python3.12", arguments: ["python3.12", "-u", "train.py", "/data/x"]), "train (python3.12)")
+        // Non-interpreters, missing argv, and a bare REPL keep the executable name.
+        XCTAssertEqual(ProcessLabel.displayName(name: "Safari", arguments: ["Safari", "open"]), "Safari")
+        XCTAssertEqual(ProcessLabel.displayName(name: "bun", arguments: nil), "bun")
+        XCTAssertEqual(ProcessLabel.displayName(name: "bun", arguments: ["bun", "--watch"]), "bun")
+        // A self-retitled process blanks argv; its title is the only label it has.
+        XCTAssertEqual(ProcessLabel.displayName(name: "node", arguments: ["node (vitest 1)", "", "   "]), "node (vitest 1)")
+    }
+
+    func testProcArgsParsingReadsArgvAfterExecutablePath() {
+        var buffer = withUnsafeBytes(of: Int32(3)) { Array($0) }
+        buffer += Array("/opt/bun".utf8) + [0, 0, 0]
+        buffer += Array("bun".utf8) + [0] + Array("/x/gjc".utf8) + [0] + Array("sdk".utf8) + [0]
+        buffer += Array("PATH=/bin".utf8) + [0]
+        XCTAssertEqual(ProcessCollector.parseProcArgs(buffer), .available(["bun", "/x/gjc", "sdk"]))
+        // A truncated buffer reports unavailable rather than a partial argv.
+        XCTAssertEqual(ProcessCollector.parseProcArgs(Array(buffer.prefix(18))), .unavailable)
+        XCTAssertEqual(ProcessCollector.parseProcArgs([1, 0]), .unavailable)
+    }
+
+    func testBoundedHistoryKeepsNewestSamplesUpToCapacity() {
+        var history = BoundedHistory(capacity: 3)
+        for second in 0..<5 {
+            history.append(HistorySample(date: Date(timeIntervalSince1970: TimeInterval(second)), value: Double(second)))
+        }
+        XCTAssertEqual(history.samples.map(\.value), [2, 3, 4])
+        history.removeAll()
+        XCTAssertTrue(history.samples.isEmpty)
+    }
+
+    func testNetworkThroughputSumsOnlyAddressedNonLoopbackInterfaces() {
+        func interface(_ name: String, _ addresses: [String], down: Double?, up: Double?) -> NetworkInterfaceSnapshot {
+            NetworkInterfaceSnapshot(
+                name: name, flags: 0, addresses: addresses,
+                linkSpeedBitsPerSecond: .unavailable, receivedBytes: .unknown, sentBytes: .unknown,
+                receivedRateBytesPerSecond: down.map(Availability.available) ?? .unknown,
+                sentRateBytesPerSecond: up.map(Availability.available) ?? .unknown)
+        }
+        let throughput = NetworkThroughput.aggregate([
+            interface("en0", ["192.168.1.2"], down: 100, up: 10),
+            interface("utun3", ["10.0.0.2"], down: 50, up: nil),
+            interface("lo0", ["127.0.0.1"], down: 9_999, up: 9_999),
+            interface("anpi0", [], down: 7_777, up: 7_777)
+        ])
+        XCTAssertEqual(throughput, NetworkThroughput(receivedBytesPerSecond: 150, sentBytesPerSecond: 10))
+        XCTAssertNil(NetworkThroughput.aggregate([interface("lo0", ["127.0.0.1"], down: 1, up: 1)]))
+    }
+
+    func testTopConsumersSkipExitedAndUnmeasuredProcesses() {
+        func row(_ pid: Int32, cpu: Double?, memory: UInt64?, missing: Int = 0) -> ProcessRow {
+            ProcessRow(
+                id: ProcessIdentity(pid: pid, startSeconds: 0, startMicroseconds: 0),
+                name: "p\(pid)", directory: .unavailable, arguments: .unavailable,
+                cpuPercent: cpu.map(Availability.available) ?? .unavailable,
+                memoryBytes: memory.map(Availability.available) ?? .unavailable,
+                energyProxyPercent: .unavailable, ports: .unavailable, missingRefreshCount: missing)
+        }
+        let rows = [
+            row(1, cpu: 5, memory: 300),
+            row(2, cpu: 80, memory: 100),
+            row(3, cpu: nil, memory: 900),
+            row(4, cpu: 99, memory: 999, missing: 1),
+            row(5, cpu: 0, memory: 200),
+            row(6, cpu: 40, memory: nil)
+        ]
+        XCTAssertEqual(TopConsumers.byCPU(rows, limit: 2).map(\.id.pid), [2, 6])
+        XCTAssertEqual(TopConsumers.byMemory(rows, limit: 3).map(\.id.pid), [3, 1, 5])
+    }
+
     func testProcessIdentityOrdersPidThenStartTime() {
         let identities = [
             ProcessIdentity(pid: 12, startSeconds: 1, startMicroseconds: 0),

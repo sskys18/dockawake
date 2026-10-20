@@ -174,7 +174,7 @@ final class DockTileView: NSView {
                           endAngle: 90 - 360 * metric.shown, clockwise: true)
             arc.lineWidth = lineWidth
             arc.lineCapStyle = .round
-            Self.color(for: metric.shown, highIsGood: metric.highIsGood).setStroke()
+            LoadPalette.color(for: metric.shown, highIsGood: metric.highIsGood).setStroke()
             arc.stroke()
         }
 
@@ -198,7 +198,7 @@ final class DockTileView: NSView {
         let size = tile.width * 0.17
         let rect = NSRect(x: tile.midX - size / 2, y: tile.midY - size / 2,
                           width: size, height: size)
-        NSColor(calibratedRed: 1.0, green: 0.74, blue: 0.2, alpha: 1).setFill()
+        LoadPalette.amber.setFill()
         NSBezierPath(ovalIn: rect).fill()
         let config = NSImage.SymbolConfiguration(pointSize: size * 0.5, weight: .bold)
             .applying(.init(paletteColors: [NSColor(calibratedWhite: 0.1, alpha: 1)]))
@@ -209,12 +209,22 @@ final class DockTileView: NSView {
                                width: symbolSize.width, height: symbolSize.height))
     }
 
-    private static func color(for fraction: Double, highIsGood: Bool) -> NSColor {
+}
+
+/// Green, amber, red by load, shared by the Dock tile and the dashboard so a
+/// metric reads the same colour in both places.
+enum LoadPalette {
+    static let green = NSColor(calibratedRed: 0.27, green: 0.85, blue: 0.55, alpha: 1)
+    static let amber = NSColor(calibratedRed: 1.0, green: 0.74, blue: 0.2, alpha: 1)
+    static let red = NSColor(calibratedRed: 1.0, green: 0.33, blue: 0.33, alpha: 1)
+
+    /// `fraction` is 0...1. Battery reads "good" when high, the rest when low.
+    static func color(for fraction: Double, highIsGood: Bool) -> NSColor {
         let load = highIsGood ? 1 - fraction : fraction
         switch load {
-        case ..<0.6: return NSColor(calibratedRed: 0.27, green: 0.85, blue: 0.55, alpha: 1)
-        case ..<0.85: return NSColor(calibratedRed: 1.0, green: 0.74, blue: 0.2, alpha: 1)
-        default: return NSColor(calibratedRed: 1.0, green: 0.33, blue: 0.33, alpha: 1)
+        case ..<0.6: return green
+        case ..<0.85: return amber
+        default: return red
         }
     }
 }

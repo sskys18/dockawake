@@ -26,10 +26,44 @@ enum Availability<Value: Equatable>: Equatable {
 struct MetricDisplay: Equatable {
     let value: Double
     let text: String
+    /// Absolute context for the percentage, such as "12 GB of 16 GB".
+    let detail: String?
 
-    init(value: Double, text: String) {
+    init(value: Double, text: String, detail: String? = nil) {
         self.value = value
         self.text = text
+        self.detail = detail
+    }
+}
+
+/// One timestamped value in a chart series.
+struct HistorySample: Equatable, Identifiable {
+    let date: Date
+    let value: Double
+
+    var id: Date { date }
+}
+
+/// A fixed-capacity, oldest-first series. Appending past capacity drops the
+/// oldest samples so a long-running app keeps a bounded chart window.
+struct BoundedHistory: Equatable {
+    let capacity: Int
+    private(set) var samples: [HistorySample] = []
+
+    init(capacity: Int) {
+        precondition(capacity > 0)
+        self.capacity = capacity
+    }
+
+    mutating func append(_ sample: HistorySample) {
+        samples.append(sample)
+        if samples.count > capacity {
+            samples.removeFirst(samples.count - capacity)
+        }
+    }
+
+    mutating func removeAll() {
+        samples.removeAll()
     }
 }
 
@@ -156,6 +190,9 @@ struct ProcessRow: Equatable, Identifiable {
     /// python all share one executable name, so the directory is the only thing
     /// that says which project a given instance is actually running.
     let directory: Availability<String>
+    /// Full argv. Like the directory, macOS hands it out only for processes
+    /// this user owns.
+    let arguments: Availability<[String]>
     let cpuPercent: Availability<Double>
     let memoryBytes: Availability<UInt64>
     let energyProxyPercent: Availability<Double>
@@ -163,10 +200,69 @@ struct ProcessRow: Equatable, Identifiable {
     let missingRefreshCount: Int
 
     var isRetainedMissing: Bool { missingRefreshCount > 0 }
+    /// The script an interpreter runs, so ten `bun` rows read as `gjc (bun)`,
+    /// `gjc sdk (bun)`, and so on.
+    var displayName: String { ProcessLabel.displayName(name: name, arguments: arguments.value) }
+    var commandText: String {
+        DashboardFormat.text(arguments) { $0.map(DashboardFormat.homeRelativePath).joined(separator: " ") }
+    }
     var cpuText: String { DashboardFormat.text(cpuPercent, formatter: DashboardFormat.processPercent) }
     var memoryText: String { DashboardFormat.text(memoryBytes, formatter: DashboardFormat.bytes) }
     var energyProxyText: String { DashboardFormat.text(energyProxyPercent, formatter: DashboardFormat.percent) }
     var directoryText: String { DashboardFormat.text(directory, formatter: DashboardFormat.homeRelativePath) }
+}
+
+enum ProcessLabel {
+    /// Runtimes whose executable name says nothing about the program they run.
+    static let interpreters: Set<String> = ["bun", "node", "deno", "python", "ruby", "perl", "php"]
+    /// Runner verbs that precede the real script or package name.
+    private static let runnerVerbs: Set<String> = ["run", "x", "exec"]
+    private static let scriptExtensions: Set<String> = ["js", "mjs", "cjs", "ts", "mts", "tsx", "py", "rb", "pl", "php"]
+
+    static func displayName(name: String, arguments: [String]?) -> String {
+        guard isInterpreter(name), let arguments, arguments.count > 1 else { return name }
+        guard var scriptIndex = arguments.indices.dropFirst().first(where: {
+            let argument = arguments[$0].trimmingCharacters(in: .whitespaces)
+            return !argument.isEmpty && !argument.hasPrefix("-")
+        }) else {
+            // A process that rewrote its own title, such as vitest's
+            // `node (vitest)`, blanks the rest of argv; the title is the label.
+            let title = arguments[0].trimmingCharacters(in: .whitespaces)
+            return title.hasPrefix(name + " ") && !title.contains("/") ? title : name
+        }
+        if runnerVerbs.contains(arguments[scriptIndex]), scriptIndex + 1 < arguments.count {
+            scriptIndex += 1
+        }
+        var label = programName(arguments[scriptIndex])
+        // One subcommand word keeps a CLI's modes apart (`gjc` vs `gjc sdk`)
+        // without turning the label into the whole command line. Only the word
+        // right after the script counts, so a flag's value is never mistaken for one.
+        if scriptIndex + 1 < arguments.count, isSubcommand(arguments[scriptIndex + 1]) {
+            label += " \(arguments[scriptIndex + 1])"
+        }
+        return "\(label) (\(name))"
+    }
+
+    private static func isInterpreter(_ name: String) -> Bool {
+        // python3, python3.12 and similar versioned names count as python.
+        let base = name.lowercased().prefix { !$0.isNumber && $0 != "." }
+        return interpreters.contains(String(base))
+    }
+
+    private static func programName(_ path: String) -> String {
+        let file = (path as NSString).lastPathComponent
+        let ext = (file as NSString).pathExtension.lowercased()
+        guard scriptExtensions.contains(ext) else { return file }
+        let stem = (file as NSString).deletingPathExtension
+        // A package entry point such as dist/cli.js or index.ts is named by its package.
+        guard ["index", "cli", "main"].contains(stem.lowercased()) else { return stem }
+        let components = (path as NSString).pathComponents.dropLast()
+        return components.last { !["dist", "src", "bin", "build", "lib", "out", "/"].contains($0) } ?? stem
+    }
+
+    private static func isSubcommand(_ word: String) -> Bool {
+        word.count <= 24 && word.allSatisfy { $0.isLetter || $0 == "-" || $0 == "_" } && word.first?.isLetter == true
+    }
 }
 
 struct PowerAssertionRow: Equatable, Identifiable {
@@ -313,6 +409,50 @@ enum LaunchAgentStatus: Equatable {
             }
             return "\(running) running · \(loaded) loaded · \(rows.count) total"
         }
+    }
+}
+
+/// Combined receive and send rate across interfaces that carry an address.
+/// The two dozen empty virtual interfaces macOS creates would otherwise bury
+/// the real number, and loopback traffic never leaves the Mac.
+struct NetworkThroughput: Equatable {
+    let receivedBytesPerSecond: Double
+    let sentBytesPerSecond: Double
+
+    /// Nil when no addressed interface exists, so the caller shows N/A rather
+    /// than a fabricated zero.
+    static func aggregate(_ interfaces: [NetworkInterfaceSnapshot]) -> NetworkThroughput? {
+        let active = activeInterfaces(interfaces)
+        guard !active.isEmpty else { return nil }
+        return NetworkThroughput(
+            receivedBytesPerSecond: active.compactMap(\.receivedRateBytesPerSecond.value).reduce(0, +),
+            sentBytesPerSecond: active.compactMap(\.sentRateBytesPerSecond.value).reduce(0, +))
+    }
+
+    static func activeInterfaces(_ interfaces: [NetworkInterfaceSnapshot]) -> [NetworkInterfaceSnapshot] {
+        interfaces.filter { !$0.addresses.isEmpty && $0.name != "lo0" }
+    }
+}
+
+enum TopConsumers {
+    /// The heaviest live processes by the given measure. Exited and unmeasured
+    /// processes are left out because a bar needs a real value.
+    static func byCPU(_ rows: [ProcessRow], limit: Int) -> [ProcessRow] {
+        top(rows, limit: limit) { $0.cpuPercent.value }
+    }
+
+    static func byMemory(_ rows: [ProcessRow], limit: Int) -> [ProcessRow] {
+        top(rows, limit: limit) { $0.memoryBytes.value.map(Double.init) }
+    }
+
+    private static func top(_ rows: [ProcessRow], limit: Int, measure: (ProcessRow) -> Double?) -> [ProcessRow] {
+        rows.compactMap { row -> (ProcessRow, Double)? in
+            guard !row.isRetainedMissing, let value = measure(row), value > 0 else { return nil }
+            return (row, value)
+        }
+        .sorted { $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1 }
+        .prefix(limit)
+        .map(\.0)
     }
 }
 

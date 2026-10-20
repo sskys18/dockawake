@@ -5,8 +5,10 @@ Run this checklist against a locally built `DockAwake.app` on an Apple silicon M
 ## Launch and locked UI
 
 - [ ] Launch the app. Confirm it shows in the Dock (no menu bar item) and the Dock icon draws live CPU, MEM, SSD, and BAT ring gauges in a 2x2 grid that refresh with the summary, with the keep-awake cup in the center while sleep is disabled.
-- [ ] Click the Dock icon. Confirm one dashboard window opens with Keep Awake, Power Assertions, Network, Public IP, and Processes cards.
-- [ ] Confirm the dashboard process columns are Process, PID, CPU, Memory, Energy, and Ports, and columns cannot be reordered.
+- [ ] Click the Dock icon. Confirm one dashboard window opens on Overview, scrolled to the top, with CPU, Memory, Storage, and Battery gauges, the load chart already holding history, Network, Top CPU, Top Memory, Sleep, Containers, and Launch Agents cards, and Keep Awake in the header.
+- [ ] Confirm the section control switches between Overview, Processes, Containers, and Launch Agents, that the card links jump to the matching section, and that Keep Awake stays visible in every section.
+- [ ] Confirm the dashboard process columns are Process, Directory, PID, CPU, Memory, Energy, Ports, Awake, and Command, the table opens sorted by CPU descending, and columns cannot be reordered.
+- [ ] With several `bun` processes running, confirm each reads by its script, such as `gjc (bun)` or `gjc sdk (bun)`, and that a process not owned by you keeps its plain name with Command N/A.
 - [ ] Press Escape or Command-W, then click the Dock icon again. Confirm each closes the window and reopening starts a fresh dashboard without duplicate windows.
 - [ ] Right-click the Dock icon. Confirm the menu has Open Dashboard, a disabled current Keep Awake status, Start at Login, and Quit.
 
