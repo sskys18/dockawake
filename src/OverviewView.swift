@@ -428,6 +428,21 @@ private struct NetworkCard: View {
                 .help("Public IP from api.ipify.org")
         } content: {
             if let detail {
+                if let proxy = detail.hotspotProxy.summary {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Self.color(proxy.tone))
+                            .frame(width: 7, height: 7)
+                        Text("Hotspot Proxy")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(proxy.text)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .help(detail.hotspotProxy.phone.map { "Phone proxy at \($0)" } ?? "From \(HotspotProxyCollector.defaultPath)")
+                }
                 let throughput = NetworkThroughput.aggregate(detail.interfaces)
                 HStack(spacing: 18) {
                     rate("arrow.down", throughput.map { DashboardFormat.rate($0.receivedBytesPerSecond) } ?? "N/A", Self.downColor)
@@ -506,6 +521,15 @@ private struct NetworkCard: View {
             let routable = interface.addresses.filter { !$0.lowercased().hasPrefix("fe80:") }
             guard let address = routable.first(where: { !$0.contains(":") }) ?? routable.first else { return nil }
             return (interface, address)
+        }
+    }
+
+    private static func color(_ tone: HotspotProxyStatus.Tone) -> Color {
+        switch tone {
+        case .good: return Color(nsColor: LoadPalette.green)
+        case .warning: return Color(nsColor: LoadPalette.amber)
+        case .bad: return Color(nsColor: LoadPalette.red)
+        case .neutral: return .secondary
         }
     }
 

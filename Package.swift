@@ -23,6 +23,7 @@ let package = Package(
                 "ContainerCollector.swift",
                 "DashboardModels.swift",
                 "DetailCollectionSession.swift",
+                "HotspotProxyCollector.swift",
                 "KeepAwakeController.swift",
                 "LaunchAgentCollector.swift",
                 "NetworkCollector.swift",

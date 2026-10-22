@@ -334,6 +334,46 @@ final class CoreBehaviorTests: XCTestCase {
         XCTAssertTrue(result.timedOut)
         XCTAssertLessThan(elapsed, 3)
     }
+    func testHotspotProxyStatusReadsTheWatcherFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("hotspot-tun.json").path
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let collector = HotspotProxyCollector(path: path, now: { now })
+        func write(_ text: String) { FileManager.default.createFile(atPath: path, contents: Data(text.utf8)) }
+
+        XCTAssertEqual(collector.collect(), .notInstalled)
+        XCTAssertNil(HotspotProxyStatus.notInstalled.summary)
+
+        write(#"{"state":"proxied","phone":"fe80::1%en0","updated":999990}"#)
+        XCTAssertEqual(collector.collect(), .proxied(phone: "fe80::1%en0"))
+        XCTAssertEqual(collector.collect().summary?.tone, .good)
+        XCTAssertEqual(collector.collect().phone, "fe80::1%en0")
+
+        write(#"{"state":"upstream-failed","phone":"172.20.10.1","updated":999990}"#)
+        XCTAssertEqual(collector.collect(), .upstreamFailed(phone: "172.20.10.1"))
+        XCTAssertEqual(collector.collect().summary?.tone, .warning)
+
+        write(#"{"state":"route-failed","phone":"172.20.10.1","updated":999990}"#)
+        XCTAssertEqual(collector.collect(), .routeFailed(phone: "172.20.10.1"))
+
+        write(#"{"state":"off","phone":"","updated":999990}"#)
+        XCTAssertEqual(collector.collect(), .off)
+        XCTAssertNil(collector.collect().phone)
+
+        // Older than three missed runs: the watcher itself is down, whatever it last wrote.
+        let stale = 1_000_000 - HotspotProxyCollector.maxAge - 1
+        write(#"{"state":"proxied","phone":"fe80::1%en0","updated":\#(stale)}"#)
+        XCTAssertEqual(collector.collect(), .stale(since: Date(timeIntervalSince1970: stale)))
+        XCTAssertEqual(collector.collect().summary?.tone, .bad)
+
+        write(#"{"state":"sideways","phone":"","updated":999990}"#)
+        XCTAssertEqual(collector.collect(), .unreadable)
+        write("not json")
+        XCTAssertEqual(collector.collect(), .unreadable)
+    }
+
     func testDetailSessionStoppedBeforeStartSchedulesNoWork() {
         let scheduled = expectation(description: "no detail schedule")
         scheduled.isInverted = true
@@ -350,7 +390,8 @@ final class CoreBehaviorTests: XCTestCase {
             processCollector: ProcessCollector(),
             powerAssertionCollector: PowerAssertionCollector(),
             containerCollector: ContainerCollector(runner: RecordingRunner(results: []), isExecutable: { _ in false }),
-            launchAgentCollector: LaunchAgentCollector(runner: RecordingRunner(results: []))
+            launchAgentCollector: LaunchAgentCollector(runner: RecordingRunner(results: [])),
+            hotspotProxyCollector: HotspotProxyCollector(path: "/nonexistent/hotspot-tun.json")
         ) { _ in
             published.fulfill()
         }
@@ -373,7 +414,8 @@ final class CoreBehaviorTests: XCTestCase {
             processCollector: ProcessCollector(),
             powerAssertionCollector: PowerAssertionCollector(),
             containerCollector: ContainerCollector(runner: RecordingRunner(results: []), isExecutable: { _ in false }),
-            launchAgentCollector: LaunchAgentCollector(runner: RecordingRunner(results: []))
+            launchAgentCollector: LaunchAgentCollector(runner: RecordingRunner(results: [])),
+            hotspotProxyCollector: HotspotProxyCollector(path: "/nonexistent/hotspot-tun.json")
         ) { _ in }
 
         session.start()
