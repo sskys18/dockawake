@@ -20,6 +20,7 @@ Clicking the Dock icon opens the Overview:
 - **Gauges** for CPU, memory, storage, and battery with absolute values such as `29.9 GB of 32 GB` or `115 GB free of 460 GB`, plus CPU and memory sparklines
 - **Load chart** of CPU and memory over the last 10 minutes. It records while the window is closed, so it already has history when you open it
 - **Network** throughput with a live down/up chart, your routable interface addresses, and your public IP
+- **Hotspot Proxy** status in the Network card when the hotspot-proxy Mac watcher (`mac/hotspot-tun.sh`, which writes `/var/run/hotspot-tun.json`) is installed: green while traffic goes through the iPhone, amber when the Mac is on the hotspot but staying direct, red when the watcher has stopped. Hidden on Macs without the watcher
 - **Top CPU** and **Top Memory** bars, each with its PID and working directory
 - **Sleep** status: whether Keep Awake is on and which apps are holding off sleep, grouped per app
 - **Containers** and **Launch Agents** summaries (running, loaded, failed) that jump to the full tables

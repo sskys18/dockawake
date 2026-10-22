@@ -461,6 +461,7 @@ struct DetailSnapshot: Equatable {
     let timestamp: Date
     let interfaces: [NetworkInterfaceSnapshot]
     let publicIP: Availability<String>
+    let hotspotProxy: HotspotProxyStatus
     let powerAssertions: [PowerAssertionRow]
     let processes: [ProcessRow]
     let containers: ContainerRuntimeStatus

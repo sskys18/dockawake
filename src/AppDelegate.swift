@@ -127,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             powerAssertionCollector: PowerAssertionCollector(),
             containerCollector: containerCollector,
             launchAgentCollector: launchAgentCollector,
+            hotspotProxyCollector: HotspotProxyCollector(),
             publish: { [weak self] snapshot in
                 guard let self,
                       self.detailSession != nil,

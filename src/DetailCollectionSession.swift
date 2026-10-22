@@ -12,6 +12,7 @@ final class DetailCollectionSession {
     private let powerAssertionCollector: PowerAssertionCollector
     private let containerCollector: ContainerCollector
     private let launchAgentCollector: LaunchAgentCollector
+    private let hotspotProxyCollector: HotspotProxyCollector
     private let publish: (DetailSnapshot) -> Void
     private let executor = DispatchQueue(label: "com.dockawake.detail", qos: .utility)
     private let worker = DispatchQueue(label: "com.dockawake.detail.collectors", qos: .utility)
@@ -28,9 +29,10 @@ final class DetailCollectionSession {
     private var assertions: [PowerAssertionRow] = []
     private var containers: ContainerRuntimeStatus = .daemonUnreachable
     private var launchAgents: LaunchAgentStatus = .runtimeUnreadable
+    private var hotspotProxy: HotspotProxyStatus = .notInstalled
 
     private var refreshInFlight = false
-    init(generation: UInt64, scheduler: Scheduling, networkCollector: NetworkCollector, publicIPClient: PublicIPClient, processCollector: ProcessCollector, powerAssertionCollector: PowerAssertionCollector, containerCollector: ContainerCollector, launchAgentCollector: LaunchAgentCollector, publish: @escaping (DetailSnapshot) -> Void) {
+    init(generation: UInt64, scheduler: Scheduling, networkCollector: NetworkCollector, publicIPClient: PublicIPClient, processCollector: ProcessCollector, powerAssertionCollector: PowerAssertionCollector, containerCollector: ContainerCollector, launchAgentCollector: LaunchAgentCollector, hotspotProxyCollector: HotspotProxyCollector, publish: @escaping (DetailSnapshot) -> Void) {
         self.generation = generation
         self.scheduler = scheduler
         self.networkCollector = networkCollector
@@ -39,6 +41,7 @@ final class DetailCollectionSession {
         self.powerAssertionCollector = powerAssertionCollector
         self.containerCollector = containerCollector
         self.launchAgentCollector = launchAgentCollector
+        self.hotspotProxyCollector = hotspotProxyCollector
         self.publish = publish
     }
 
@@ -89,6 +92,7 @@ final class DetailCollectionSession {
             self.assertions.removeAll()
             self.containers = .daemonUnreachable
             self.launchAgents = .runtimeUnreadable
+            self.hotspotProxy = .notInstalled
             self.state = .stopped
             self.logger.info("detail session \(self.generation, privacy: .public) stopped")
         }
@@ -113,6 +117,7 @@ final class DetailCollectionSession {
                 let containers = self.containerCollector.collect()
                 guard self.isRunning else { return }
                 let launchAgents = self.launchAgentCollector.collect()
+                let hotspotProxy = self.hotspotProxyCollector.collect()
                 self.executor.async {
                     guard !self.isCancelled, case .running = self.state else {
                         self.refreshInFlight = false
@@ -123,6 +128,7 @@ final class DetailCollectionSession {
                     self.assertions = assertions
                     self.containers = containers
                     self.launchAgents = launchAgents
+                    self.hotspotProxy = hotspotProxy
                     self.refreshInFlight = false
                     self.publishIfRunning(interfaces: interfaces, processes: processes, assertions: assertions, containers: containers, launchAgents: launchAgents)
                 }
@@ -170,7 +176,7 @@ final class DetailCollectionSession {
 
     private func publishIfRunning(interfaces: [NetworkInterfaceSnapshot], processes: [ProcessRow], assertions: [PowerAssertionRow], containers: ContainerRuntimeStatus, launchAgents: LaunchAgentStatus) {
         guard !isCancelled, case .running = state else { return }
-        let snapshot = DetailSnapshot(generation: generation, timestamp: Date(), interfaces: interfaces, publicIP: publicIP, powerAssertions: assertions, processes: processes, containers: containers, launchAgents: launchAgents)
+        let snapshot = DetailSnapshot(generation: generation, timestamp: Date(), interfaces: interfaces, publicIP: publicIP, hotspotProxy: hotspotProxy, powerAssertions: assertions, processes: processes, containers: containers, launchAgents: launchAgents)
         DispatchQueue.main.async { [weak self, publish] in
             guard let self, !self.isCancelled else { return }
             publish(snapshot)
