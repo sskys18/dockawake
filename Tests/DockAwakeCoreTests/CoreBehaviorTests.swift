@@ -722,6 +722,37 @@ final class CoreBehaviorTests: XCTestCase {
         XCTAssertFalse(collector.stop(containerID: "aaa111"))
     }
 
+    func testExitNodeParseReportsSurfsharkNodeOtherNodeOffAndStopped() {
+        func status(_ backend: String, _ peers: String) -> Data {
+            Data(#"{"BackendState":"\#(backend)","Peer":{\#(peers)}}"#.utf8)
+        }
+        let oci = #""a":{"HostName":"exit-node","TailscaleIPs":["100.64.0.1"],"ExitNode":true}"#
+        let other = #""b":{"HostName":"home","TailscaleIPs":["100.1.2.3"],"ExitNode":true}"#
+        let idle = #""a":{"HostName":"exit-node","TailscaleIPs":["100.64.0.1"],"ExitNode":false}"#
+
+        XCTAssertEqual(ExitNodeController.parse(status("Running", oci)), .on)
+        XCTAssertEqual(ExitNodeController.parse(status("Running", other)), .other("home"))
+        XCTAssertEqual(ExitNodeController.parse(status("Running", idle)), .off)
+        XCTAssertEqual(ExitNodeController.parse(status("Stopped", oci)), .unavailable("Tailscale Stopped"))
+        XCTAssertEqual(ExitNodeController.parse(Data("nope".utf8)), .unavailable("unreadable tailscale status"))
+    }
+
+    func testExitNodeToggleSelectsAndClearsOCINode() {
+        let ok = CommandResult(status: 0, output: Data(#"{"BackendState":"Running","Peer":{}}"#.utf8), timedOut: false, exceededOutputLimit: false)
+        let runner = RecordingRunner(results: [ok, ok, ok, ok])
+        let controller = ExitNodeController(runner: runner)
+        let done = expectation(description: "toggled")
+        done.expectedFulfillmentCount = 2
+        controller.setEnabled(true) { _ in done.fulfill() }
+        controller.setEnabled(false) { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
+
+        XCTAssertEqual(runner.calls.map(\.arguments), [
+            ["set", "--exit-node=100.64.0.1"], ["status", "--json"],
+            ["set", "--exit-node="], ["status", "--json"],
+        ])
+    }
+
 }
 
 private final class RecordingRunner: CommandRunning {

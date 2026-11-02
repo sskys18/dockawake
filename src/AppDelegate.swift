@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var detailGeneration: UInt64 = 0
     private var escapeMonitor: Any?
     private var signalSources: [DispatchSourceSignal] = []
+    private let exitNode = ExitNodeController()
+    private var exitNodeState: ExitNodeState = .unavailable("checking")
+    private var exitNodeApplying = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.dockTile.contentView = dockTile
@@ -28,6 +31,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installSignalHandlers()
         summaryController?.start()
         keepAwakeController?.adoptCurrentState()
+        refreshExitNodeState()
+    }
+
+    /// The Dock menu is built synchronously, so it shows the last read state and starts a fresh read.
+    private func refreshExitNodeState() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let state = self.exitNode.currentState()
+            DispatchQueue.main.async { self.exitNodeState = state }
+        }
     }
 
     private static func makeMainMenu() -> NSMenu {
@@ -166,6 +179,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             awake.action = nil
         }
         menu.addItem(awake)
+        menu.addItem(exitNodeMenuItem())
+        refreshExitNodeState()
         menu.addItem(.separator())
         let login = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         login.target = self
@@ -177,6 +192,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func toggleKeepAwake() {
         guard case let .available(enabled) = keepAwakeState?.current else { return }
         keepAwakeController?.setDesired(!enabled)
+    }
+
+    private func exitNodeMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Surfshark (Tokyo via OCI)", action: #selector(toggleExitNode), keyEquivalent: "")
+        item.target = self
+        switch exitNodeState {
+        case .on: item.state = .on
+        case .off: item.state = .off
+        case let .other(host): item.title = "Surfshark (exit node now \(host))"
+        case let .unavailable(reason):
+            item.title = "Surfshark: \(reason)"
+            item.action = nil
+        }
+        if exitNodeApplying {
+            item.title = "Surfshark: Applying…"
+            item.action = nil
+        }
+        return item
+    }
+
+    @objc private func toggleExitNode() {
+        exitNodeApplying = true
+        exitNode.setEnabled(exitNodeState != .on) { [weak self] state in
+            self?.exitNodeApplying = false
+            self?.exitNodeState = state
+        }
     }
 
     @objc private func toggleLoginItem() {

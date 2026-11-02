@@ -23,6 +23,7 @@ Clicking the Dock icon opens the Overview:
 - **Hotspot Proxy** status in the Network card when the hotspot-proxy Mac watcher (`mac/hotspot-tun.sh`, which writes `/var/run/hotspot-tun.json`) is installed: green while traffic goes through the iPhone, amber when the Mac is on the hotspot but staying direct, red when the watcher has stopped. Hidden on Macs without the watcher
 - **Top CPU** and **Top Memory** bars, each with its PID and working directory
 - **Sleep** status: whether Keep Awake is on and which apps are holding off sleep, grouped per app
+- **Surfshark exit node**: the Dock menu item `Surfshark (Tokyo via OCI)` runs `tailscale set --exit-node=100.64.0.1` (or clears it). The OCI node forwards exit traffic through its Surfshark Tokyo WireGuard tunnel; tailnet traffic stays direct. Setup: `the exit node setup`
 - **Containers** and **Launch Agents** summaries (running, loaded, failed) that jump to the full tables
 
 ### Every process, named by what it runs
