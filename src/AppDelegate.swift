@@ -216,32 +216,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func exitNodeMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "Surfshark (Tokyo via OCI)", action: #selector(toggleExitNode), keyEquivalent: "")
-        item.target = self
-        switch exitNodeState {
-        case .on: item.state = .on
-        case .off: item.state = .off
-        case let .other(host): item.title = "Surfshark (exit node now \(host))"
-        case let .unavailable(reason):
-            item.title = "Surfshark: \(reason)"
-            item.action = nil
-        }
+        let item = NSMenuItem(title: "Surfshark", action: nil, keyEquivalent: "")
         if exitNodeApplying {
             item.title = "Surfshark: Applying…"
-            item.action = nil
+            return item
         }
+        var current: String?
+        switch exitNodeState {
+        case let .on(server):
+            current = server
+            item.title = "Surfshark: \(SurfsharkServer.label(for: server))"
+        case .off: item.title = "Surfshark: Off"
+        case let .other(host): item.title = "Surfshark (exit node now \(host))"
+        case let .unavailable(reason): item.title = "Surfshark: \(reason)"
+        }
+        let submenu = NSMenu()
+        let off = NSMenuItem(title: "Off", action: #selector(selectExitNode(_:)), keyEquivalent: "")
+        off.target = self
+        off.state = exitNodeState == .off ? .on : .off
+        submenu.addItem(off)
+        for server in SurfsharkServer.all {
+            let choice = NSMenuItem(title: server.label, action: #selector(selectExitNode(_:)), keyEquivalent: "")
+            choice.target = self
+            choice.representedObject = server.id
+            choice.state = current == server.id ? .on : .off
+            submenu.addItem(choice)
+        }
+        item.submenu = submenu
         return item
     }
 
-    @objc private func toggleExitNode() {
-        setExitNode(exitNodeState != .on)
+    @objc private func selectExitNode(_ sender: NSMenuItem) {
+        setExitNode(sender.representedObject as? String)
     }
 
-    private func setExitNode(_ enabled: Bool) {
+    private func setExitNode(_ server: String?) {
         guard !exitNodeApplying else { return }
-        if case .unavailable = exitNodeState { refreshExitNodeState(); return }
         exitNodeApplying = true
-        exitNode.setEnabled(enabled) { [weak self] state in
+        exitNode.select(server: server) { [weak self] state in
             self?.exitNodeApplying = false
             self?.exitNodeState = state
         }

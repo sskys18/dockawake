@@ -730,27 +730,53 @@ final class CoreBehaviorTests: XCTestCase {
         let other = #""b":{"HostName":"home","TailscaleIPs":["100.1.2.3"],"ExitNode":true}"#
         let idle = #""a":{"HostName":"exit-node","TailscaleIPs":["100.64.0.1"],"ExitNode":false}"#
 
-        XCTAssertEqual(ExitNodeController.parse(status("Running", oci)), .on)
+        XCTAssertEqual(ExitNodeController.parse(status("Running", oci)), .on(server: ""))
         XCTAssertEqual(ExitNodeController.parse(status("Running", other)), .other("home"))
         XCTAssertEqual(ExitNodeController.parse(status("Running", idle)), .off)
         XCTAssertEqual(ExitNodeController.parse(status("Stopped", oci)), .unavailable("Tailscale Stopped"))
         XCTAssertEqual(ExitNodeController.parse(Data("nope".utf8)), .unavailable("unreadable tailscale status"))
     }
 
-    func testExitNodeToggleSelectsAndClearsOCINode() {
-        let ok = CommandResult(status: 0, output: Data(#"{"BackendState":"Running","Peer":{}}"#.utf8), timedOut: false, exceededOutputLimit: false)
-        let runner = RecordingRunner(results: [ok, ok, ok, ok])
-        let controller = ExitNodeController(runner: runner)
-        let done = expectation(description: "toggled")
-        done.expectedFulfillmentCount = 2
-        controller.setEnabled(true) { _ in done.fulfill() }
-        controller.setEnabled(false) { _ in done.fulfill() }
+    func testExitNodeSelectSwitchesOCIServerThenSelectsNodeAndReadsBackCountry() {
+        func ok(_ text: String) -> CommandResult {
+            CommandResult(status: 0, output: Data(text.utf8), timedOut: false, exceededOutputLimit: false)
+        }
+        let selected = #"{"BackendState":"Running","Peer":{"a":{"TailscaleIPs":["100.64.0.1"],"ExitNode":true}}}"#
+        let runner = RecordingRunner(results: [ok("sg-sng\n"), ok(""), ok(selected), ok("sg-sng\n")])
+        let done = expectation(description: "selected")
+        var final: ExitNodeState?
+        ExitNodeController(runner: runner).select(server: "sg-sng") { final = $0; done.fulfill() }
         wait(for: [done], timeout: 2)
 
-        XCTAssertEqual(runner.calls.map(\.arguments), [
-            ["set", "--exit-node=100.64.0.1"], ["status", "--json"],
-            ["set", "--exit-node="], ["status", "--json"],
-        ])
+        XCTAssertEqual(final, .on(server: "sg-sng"))
+        XCTAssertEqual(runner.calls.map(\.executable), ["/usr/bin/ssh", "/usr/local/bin/tailscale", "/usr/local/bin/tailscale", "/usr/bin/ssh"])
+        XCTAssertEqual(runner.calls[0].arguments.last, "sg-sng")
+        XCTAssertEqual(runner.calls[1].arguments, ["set", "--exit-node=100.64.0.1"])
+        XCTAssertEqual(runner.calls[3].arguments.last, "status")
+    }
+
+    func testExitNodeSelectLeavesExitNodeAloneWhenOCISwitchFails() {
+        let failed = CommandResult(status: 1, output: Data(), timedOut: false, exceededOutputLimit: false)
+        let runner = RecordingRunner(results: [failed])
+        let done = expectation(description: "failed")
+        var final: ExitNodeState?
+        ExitNodeController(runner: runner).select(server: "us-lax") { final = $0; done.fulfill() }
+        wait(for: [done], timeout: 2)
+
+        XCTAssertEqual(final, .unavailable("switch to us-lax failed"))
+        XCTAssertEqual(runner.calls.count, 1)
+    }
+
+    func testExitNodeSelectOffOnlyClearsTailscaleExitNode() {
+        let ok = CommandResult(status: 0, output: Data(#"{"BackendState":"Running","Peer":{}}"#.utf8), timedOut: false, exceededOutputLimit: false)
+        let runner = RecordingRunner(results: [ok, ok])
+        let done = expectation(description: "off")
+        var final: ExitNodeState?
+        ExitNodeController(runner: runner).select(server: nil) { final = $0; done.fulfill() }
+        wait(for: [done], timeout: 2)
+
+        XCTAssertEqual(final, .off)
+        XCTAssertEqual(runner.calls.map(\.arguments), [["set", "--exit-node="], ["status", "--json"]])
     }
 
 }

@@ -143,13 +143,14 @@ private enum DashboardCell {
 
 final class DashboardViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     var onAwakeChange: ((Bool) -> Void)?
-    var onSurfsharkChange: ((Bool) -> Void)?
+    /// nil = off, otherwise a SurfsharkServer id.
+    var onSurfsharkChange: ((String?) -> Void)?
     /// Asks the owner to stop the given containers and report, per container ID,
     /// whether it succeeded. The controller never runs commands itself.
     var onContainerStop: (([String], @escaping ([String: Bool]) -> Void) -> Void)?
 
     private let awakeSwitch = NSSwitch()
-    private let surfsharkSwitch = NSSwitch()
+    private let surfsharkPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let surfsharkStateLabel = NSTextField(labelWithString: "Checking")
     private let awakeStateLabel = NSTextField(labelWithString: "Unknown")
     private let updatedLabel = NSTextField(labelWithString: "")
@@ -217,18 +218,23 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         awakeRow.alignment = .centerY
         awakeRow.spacing = 8
 
-        surfsharkSwitch.target = self
-        surfsharkSwitch.action = #selector(surfsharkSwitchChanged)
-        surfsharkSwitch.setAccessibilityLabel("Surfshark")
-        surfsharkSwitch.toolTip = "Routes this Mac's internet traffic through the OCI exit node and Surfshark Tokyo. Tailnet traffic stays direct."
-        surfsharkSwitch.isEnabled = false
+        surfsharkPopup.addItem(withTitle: "Off")
+        for server in SurfsharkServer.all {
+            surfsharkPopup.addItem(withTitle: server.label)
+            surfsharkPopup.lastItem?.representedObject = server.id
+        }
+        surfsharkPopup.target = self
+        surfsharkPopup.action = #selector(surfsharkPopupChanged)
+        surfsharkPopup.setAccessibilityLabel("Surfshark country")
+        surfsharkPopup.toolTip = "Routes this Mac's internet traffic through the OCI exit node and the chosen Surfshark server. Tailnet traffic stays direct. The country is shared by every device using the exit node."
+        surfsharkPopup.isEnabled = false
         surfsharkStateLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         surfsharkStateLabel.textColor = .secondaryLabelColor
         let surfsharkIcon = NSImageView(image: NSImage(systemSymbolName: "shield.fill", accessibilityDescription: nil) ?? NSImage())
         surfsharkIcon.contentTintColor = .systemTeal
         let surfsharkTitle = NSTextField(labelWithString: "Surfshark")
         surfsharkTitle.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        let surfsharkRow = NSStackView(views: [surfsharkStateLabel, surfsharkIcon, surfsharkTitle, surfsharkSwitch])
+        let surfsharkRow = NSStackView(views: [surfsharkStateLabel, surfsharkIcon, surfsharkTitle, surfsharkPopup])
         surfsharkRow.orientation = .horizontal
         surfsharkRow.alignment = .centerY
         surfsharkRow.spacing = 8
@@ -491,24 +497,28 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         onAwakeChange?(awakeSwitch.state == .on)
     }
 
-    @objc private func surfsharkSwitchChanged() {
-        surfsharkSwitch.isEnabled = false
+    @objc private func surfsharkPopupChanged() {
+        surfsharkPopup.isEnabled = false
         surfsharkStateLabel.stringValue = "Applying…"
-        onSurfsharkChange?(surfsharkSwitch.state == .on)
+        surfsharkStateLabel.textColor = .secondaryLabelColor
+        onSurfsharkChange?(surfsharkPopup.selectedItem?.representedObject as? String)
     }
 
     func updateSurfshark(_ state: ExitNodeState, applying: Bool) {
         precondition(Thread.isMainThread)
         let text: String
         let color: NSColor
+        var selected = 0
         switch state {
-        case .on: text = "Tokyo"; color = .systemGreen
-        case .off: text = "Off"; color = .secondaryLabelColor
+        case let .on(server):
+            text = "On"; color = .systemGreen
+            selected = (SurfsharkServer.all.firstIndex { $0.id == server } ?? -1) + 1
+        case .off: text = ""; color = .secondaryLabelColor
         case let .other(host): text = "Exit node \(host)"; color = .systemOrange
         case let .unavailable(reason): text = reason; color = .systemOrange
         }
-        surfsharkSwitch.state = state == .on ? .on : .off
-        if case .unavailable = state { surfsharkSwitch.isEnabled = false } else { surfsharkSwitch.isEnabled = !applying }
+        surfsharkPopup.selectItem(at: selected)
+        if case .unavailable = state { surfsharkPopup.isEnabled = !applying } else { surfsharkPopup.isEnabled = !applying }
         surfsharkStateLabel.stringValue = applying ? "Applying…" : text
         surfsharkStateLabel.textColor = color
     }

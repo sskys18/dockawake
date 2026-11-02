@@ -24,7 +24,7 @@ Clicking the Dock icon opens the Overview:
 - **Top CPU** and **Top Memory** bars, each with its PID and working directory
 - **Sleep** status: whether Keep Awake is on and which apps are holding off sleep, grouped per app
 - **Menu bar button** (gauge icon) opens the dashboard
-- **Surfshark exit node**: the `Surfshark` switch in the dashboard header (next to Keep Awake) and the Dock menu item `Surfshark (Tokyo via OCI)` both run `tailscale set --exit-node=100.64.0.1` (or clears it). The OCI node forwards exit traffic through its Surfshark Tokyo WireGuard tunnel; tailnet traffic stays direct. Setup: `the exit node setup`
+- **Surfshark exit node**: the `Surfshark` dropdown in the dashboard header (next to Keep Awake) and the Dock menu `Surfshark` submenu pick Off, Korea, Japan, Singapore, US (LA), or UK (London). Picking a country runs `surfshark-switch <server>` on OCI through the forced-command key `~/.ssh/dockawake_surfshark`, then `tailscale set --exit-node=100.64.0.1`; Off only clears the exit node. The country is shared by every device using the exit node; tailnet traffic stays direct. Setup: `the exit node setup`
 - **Containers** and **Launch Agents** summaries (running, loaded, failed) that jump to the full tables
 
 ### Every process, named by what it runs
