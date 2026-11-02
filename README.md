@@ -89,10 +89,11 @@ Evidence limitation: this path is verified against fixture bundles and negative 
 
 ## Usage
 
-- **Click the Dock icon** to open the dashboard. Press Escape or Command-W to close it
+- **Click the Dock icon or the gauge icon in the menu bar** to open the dashboard. Press Escape or Command-W to close it
 - **Sections**: switch between Overview, Processes, Containers, and Launch Agents with the control at the top. The links on the Overview cards jump straight to a section
 - **Keep Awake**: the switch at the top right, visible in every section
-- **Right-click the Dock icon** for Open Dashboard, the current readings, a Keep Awake toggle, and Start at Login
+- **Surfshark**: the country dropdown left of Keep Awake. Pick a country to route this Mac's internet traffic through it; pick Off for your normal connection. The label shows `On` in green when active. Keep the Surfshark app on the Mac disconnected: the tunnel runs on OCI
+- **Right-click the Dock icon** for Open Dashboard, the current readings, a Keep Awake toggle, the Surfshark submenu, and Start at Login
 - **Quit** waits for the final helper `off` call and restores normal sleep
 
 When keeping the Mac awake with the lid closed, use a stable power source and make sure it has airflow. Closed-lid operation increases heat and battery drain.
@@ -115,9 +116,11 @@ sudo -n /Library/PrivilegedHelperTools/dockawake-pmset on    # pmset -a disables
 sudo -n /Library/PrivilegedHelperTools/dockawake-pmset off   # pmset -a disablesleep 0
 ```
 
+The Surfshark control runs two commands as you, never as root: `/usr/local/bin/tailscale status|set --exit-node=...`, and `ssh` with the key `~/.ssh/dockawake_surfshark` to `ubuntu@100.64.0.1`. That key is `restrict` with a forced command on OCI, so it can only run `surfshark-switch` with one of `status`, `kr-seo`, `jp-tok`, `sg-sng`, `us-lax`, `uk-lon`; anything else is rejected.
+
 The sudoers rule is limited to those two exact commands. DockAwake reads the actual tri-state `SleepDisabled` value after every change, checks it again after 10 seconds when needed, and never reports an unreadable value as disabled. Shutdown rejects new writes and orders a final `off` after any running helper call.
 
-Everything stays on your Mac. There are no accounts, telemetry, history database, monitoring daemon, private energy APIs, or privileged metric paths. The only network request is one public-IP lookup to `https://api.ipify.org?format=json` per dashboard opening; it has no retry or fallback provider and is canceled when the window closes.
+Everything stays on your Mac. There are no accounts, telemetry, history database, monitoring daemon, private energy APIs, or privileged metric paths. Network use is one public-IP lookup to `https://api.ipify.org?format=json` per dashboard opening (no retry or fallback provider, canceled when the window closes), plus the Surfshark SSH call to OCI over Tailscale when you change the country or open the dashboard or Dock menu while the exit node is on.
 
 ## Recovery
 
