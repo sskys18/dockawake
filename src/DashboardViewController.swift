@@ -143,11 +143,14 @@ private enum DashboardCell {
 
 final class DashboardViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     var onAwakeChange: ((Bool) -> Void)?
+    var onSurfsharkChange: ((Bool) -> Void)?
     /// Asks the owner to stop the given containers and report, per container ID,
     /// whether it succeeded. The controller never runs commands itself.
     var onContainerStop: (([String], @escaping ([String: Bool]) -> Void) -> Void)?
 
     private let awakeSwitch = NSSwitch()
+    private let surfsharkSwitch = NSSwitch()
+    private let surfsharkStateLabel = NSTextField(labelWithString: "Checking")
     private let awakeStateLabel = NSTextField(labelWithString: "Unknown")
     private let updatedLabel = NSTextField(labelWithString: "")
     private let overview = OverviewModel()
@@ -214,6 +217,22 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         awakeRow.alignment = .centerY
         awakeRow.spacing = 8
 
+        surfsharkSwitch.target = self
+        surfsharkSwitch.action = #selector(surfsharkSwitchChanged)
+        surfsharkSwitch.setAccessibilityLabel("Surfshark")
+        surfsharkSwitch.toolTip = "Routes this Mac's internet traffic through the OCI exit node and Surfshark Tokyo. Tailnet traffic stays direct."
+        surfsharkSwitch.isEnabled = false
+        surfsharkStateLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        surfsharkStateLabel.textColor = .secondaryLabelColor
+        let surfsharkIcon = NSImageView(image: NSImage(systemSymbolName: "shield.fill", accessibilityDescription: nil) ?? NSImage())
+        surfsharkIcon.contentTintColor = .systemTeal
+        let surfsharkTitle = NSTextField(labelWithString: "Surfshark")
+        surfsharkTitle.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        let surfsharkRow = NSStackView(views: [surfsharkStateLabel, surfsharkIcon, surfsharkTitle, surfsharkSwitch])
+        surfsharkRow.orientation = .horizontal
+        surfsharkRow.alignment = .centerY
+        surfsharkRow.spacing = 8
+
         sectionControl.segmentCount = DashboardSection.allCases.count
         sectionControl.trackingMode = .selectOne
         sectionControl.segmentStyle = .automatic
@@ -225,7 +244,7 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         sectionControl.action = #selector(sectionChanged)
         sectionControl.setAccessibilityLabel("Dashboard sections")
 
-        let header = NSStackView(views: [sectionControl, NSView(), awakeRow])
+        let header = NSStackView(views: [sectionControl, NSView(), surfsharkRow, awakeRow])
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = 12
@@ -470,6 +489,28 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     @objc private func awakeSwitchChanged() {
         onAwakeChange?(awakeSwitch.state == .on)
+    }
+
+    @objc private func surfsharkSwitchChanged() {
+        surfsharkSwitch.isEnabled = false
+        surfsharkStateLabel.stringValue = "Applying…"
+        onSurfsharkChange?(surfsharkSwitch.state == .on)
+    }
+
+    func updateSurfshark(_ state: ExitNodeState, applying: Bool) {
+        precondition(Thread.isMainThread)
+        let text: String
+        let color: NSColor
+        switch state {
+        case .on: text = "Tokyo"; color = .systemGreen
+        case .off: text = "Off"; color = .secondaryLabelColor
+        case let .other(host): text = "Exit node \(host)"; color = .systemOrange
+        case let .unavailable(reason): text = reason; color = .systemOrange
+        }
+        surfsharkSwitch.state = state == .on ? .on : .off
+        if case .unavailable = state { surfsharkSwitch.isEnabled = false } else { surfsharkSwitch.isEnabled = !applying }
+        surfsharkStateLabel.stringValue = applying ? "Applying…" : text
+        surfsharkStateLabel.textColor = color
     }
 
     private func updateContainers(_ status: ContainerRuntimeStatus) {

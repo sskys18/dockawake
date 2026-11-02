@@ -20,13 +20,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var signalSources: [DispatchSourceSignal] = []
     private let exitNode = ExitNodeController()
     private var exitNodeState: ExitNodeState = .unavailable("checking") {
-        didSet { updateExitNodeButton() }
+        didSet { dashboard.updateSurfshark(exitNodeState, applying: exitNodeApplying) }
     }
     private var exitNodeApplying = false {
-        didSet { updateExitNodeButton() }
+        didSet { dashboard.updateSurfshark(exitNodeState, applying: exitNodeApplying) }
     }
-    private var exitNodeStatusItem: NSStatusItem?
-    private var exitNodeTimer: Timer?
+    private var dashboardStatusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.dockTile.contentView = dockTile
@@ -37,38 +36,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installSignalHandlers()
         summaryController?.start()
         keepAwakeController?.adoptCurrentState()
-        installExitNodeStatusItem()
+        installDashboardStatusItem()
         refreshExitNodeState()
     }
 
-    /// Menu bar button: one click turns the Surfshark exit node on or off. Filled shield = on.
-    private func installExitNodeStatusItem() {
+    /// Menu bar button that opens the dashboard.
+    private func installDashboardStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.67percent", accessibilityDescription: "Open DockAwake dashboard")
+        item.button?.image?.isTemplate = true
+        item.button?.toolTip = "Open DockAwake dashboard"
         item.button?.target = self
-        item.button?.action = #selector(toggleExitNode)
-        exitNodeStatusItem = item
-        updateExitNodeButton()
-        // Picks up changes made outside DockAwake (Tailscale menu, CLI).
-        exitNodeTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            self?.refreshExitNodeState()
-        }
-    }
-
-    private func updateExitNodeButton() {
-        guard let button = exitNodeStatusItem?.button else { return }
-        let symbol: String
-        let tip: String
-        switch exitNodeState {
-        case .on: symbol = "shield.fill"; tip = "Surfshark Tokyo ON (click to turn off)"
-        case .off: symbol = "shield"; tip = "Surfshark OFF (click to route via Tokyo)"
-        case let .other(host): symbol = "shield.lefthalf.filled"; tip = "Exit node is \(host) (click to use Surfshark Tokyo)"
-        case let .unavailable(reason): symbol = "shield.slash"; tip = "Surfshark: \(reason)"
-        }
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
-        button.image?.isTemplate = true
-        button.toolTip = exitNodeApplying ? "Surfshark: applying…" : tip
-        button.isEnabled = !exitNodeApplying
-        button.appearsDisabled = exitNodeApplying
+        item.button?.action = #selector(openDashboard)
+        dashboardStatusItem = item
     }
 
     /// The Dock menu is built synchronously, so it shows the last read state and starts a fresh read.
@@ -110,6 +90,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func configureControllers() {
         dashboard.onAwakeChange = { [weak self] desired in
             self?.keepAwakeController?.setDesired(desired)
+        }
+        dashboard.onSurfsharkChange = { [weak self] desired in
+            self?.setExitNode(desired)
         }
         dashboard.onContainerStop = { [weak self] containerIDs, completion in
             guard let self else { return }
@@ -156,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func openDashboard() {
+        refreshExitNodeState()
         if !window.isVisible || window.isMiniaturized {
             if detailSession == nil { startDetailSession() }
             window.deminiaturize(nil)
@@ -250,10 +234,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func toggleExitNode() {
+        setExitNode(exitNodeState != .on)
+    }
+
+    private func setExitNode(_ enabled: Bool) {
         guard !exitNodeApplying else { return }
         if case .unavailable = exitNodeState { refreshExitNodeState(); return }
         exitNodeApplying = true
-        exitNode.setEnabled(exitNodeState != .on) { [weak self] state in
+        exitNode.setEnabled(enabled) { [weak self] state in
             self?.exitNodeApplying = false
             self?.exitNodeState = state
         }
@@ -305,7 +293,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         summaryController?.stop()
-        exitNodeTimer?.invalidate()
         detailSession?.stop()
         detailSession = nil
         removeEscapeMonitor()
