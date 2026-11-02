@@ -19,8 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var escapeMonitor: Any?
     private var signalSources: [DispatchSourceSignal] = []
     private let exitNode = ExitNodeController()
-    private var exitNodeState: ExitNodeState = .unavailable("checking")
-    private var exitNodeApplying = false
+    private var exitNodeState: ExitNodeState = .unavailable("checking") {
+        didSet { updateExitNodeButton() }
+    }
+    private var exitNodeApplying = false {
+        didSet { updateExitNodeButton() }
+    }
+    private var exitNodeStatusItem: NSStatusItem?
+    private var exitNodeTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.dockTile.contentView = dockTile
@@ -31,7 +37,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installSignalHandlers()
         summaryController?.start()
         keepAwakeController?.adoptCurrentState()
+        installExitNodeStatusItem()
         refreshExitNodeState()
+    }
+
+    /// Menu bar button: one click turns the Surfshark exit node on or off. Filled shield = on.
+    private func installExitNodeStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.target = self
+        item.button?.action = #selector(toggleExitNode)
+        exitNodeStatusItem = item
+        updateExitNodeButton()
+        // Picks up changes made outside DockAwake (Tailscale menu, CLI).
+        exitNodeTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.refreshExitNodeState()
+        }
+    }
+
+    private func updateExitNodeButton() {
+        guard let button = exitNodeStatusItem?.button else { return }
+        let symbol: String
+        let tip: String
+        switch exitNodeState {
+        case .on: symbol = "shield.fill"; tip = "Surfshark Tokyo ON (click to turn off)"
+        case .off: symbol = "shield"; tip = "Surfshark OFF (click to route via Tokyo)"
+        case let .other(host): symbol = "shield.lefthalf.filled"; tip = "Exit node is \(host) (click to use Surfshark Tokyo)"
+        case let .unavailable(reason): symbol = "shield.slash"; tip = "Surfshark: \(reason)"
+        }
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+        button.image?.isTemplate = true
+        button.toolTip = exitNodeApplying ? "Surfshark: applying…" : tip
+        button.isEnabled = !exitNodeApplying
+        button.appearsDisabled = exitNodeApplying
     }
 
     /// The Dock menu is built synchronously, so it shows the last read state and starts a fresh read.
@@ -213,6 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func toggleExitNode() {
+        guard !exitNodeApplying else { return }
+        if case .unavailable = exitNodeState { refreshExitNodeState(); return }
         exitNodeApplying = true
         exitNode.setEnabled(exitNodeState != .on) { [weak self] state in
             self?.exitNodeApplying = false
@@ -266,6 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         summaryController?.stop()
+        exitNodeTimer?.invalidate()
         detailSession?.stop()
         detailSession = nil
         removeEscapeMonitor()
