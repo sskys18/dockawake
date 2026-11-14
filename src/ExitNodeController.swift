@@ -1,7 +1,7 @@
 import Foundation
 
 /// Routes the Mac's internet traffic through the OCI Tailscale exit node, whose exit traffic
-/// leaves via a Surfshark WireGuard tunnel (see the exit node setup). The country is
+/// leaves via a Surfshark WireGuard tunnel (node IP from `LocalConfig`). The country is
 /// switched on OCI through a forced-command SSH key that can only run `surfshark-switch`.
 enum ExitNodeState: Equatable {
     case off
@@ -32,20 +32,22 @@ struct SurfsharkServer: Equatable {
 final class ExitNodeController {
     static let tailscalePath = "/usr/local/bin/tailscale"
     static let sshPath = "/usr/bin/ssh"
-    static let nodeIP = "100.64.0.1"
     static let switchKey = NSHomeDirectory() + "/.ssh/dockawake_surfshark"
 
     private let runner: CommandRunning
+    private let nodeIP: String?
     private let queue = DispatchQueue(label: "com.dockawake.exitnode", qos: .userInitiated)
 
-    init(runner: CommandRunning = CommandRunner()) {
+    init(nodeIP: String?, runner: CommandRunning = CommandRunner()) {
+        self.nodeIP = nodeIP
         self.runner = runner
     }
 
     func currentState() -> ExitNodeState {
+        guard let nodeIP else { return .unavailable("not configured") }
         let result = runner.run(executable: Self.tailscalePath, arguments: ["status", "--json"], outputLimit: 1024 * 1024, timeout: 5)
         guard result.succeeded else { return .unavailable("tailscale status failed") }
-        let state = Self.parse(result.output)
+        let state = Self.parse(result.output, nodeIP: nodeIP)
         guard state == .on(server: "") else { return state }
         let server = remote("status")
         return server.map { .on(server: $0) } ?? .unavailable("OCI unreachable")
@@ -56,12 +58,14 @@ final class ExitNodeController {
     func select(server: String?, completion: @escaping (ExitNodeState) -> Void) {
         queue.async {
             let state: ExitNodeState
-            if let server {
+            if let nodeIP = self.nodeIP, let server {
                 if self.remote(server) != server {
                     state = .unavailable("switch to \(server) failed")
                 } else {
-                    state = self.setExitNode("--exit-node=\(Self.nodeIP)")
+                    state = self.setExitNode("--exit-node=\(nodeIP)")
                 }
+            } else if self.nodeIP == nil {
+                state = .unavailable("not configured")
             } else {
                 state = self.setExitNode("--exit-node=")
             }
@@ -78,7 +82,7 @@ final class ExitNodeController {
         let result = runner.run(
             executable: Self.sshPath,
             arguments: ["-i", Self.switchKey, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
-                        "ubuntu@\(Self.nodeIP)", command],
+                        "ubuntu@\(nodeIP ?? "")", command],
             outputLimit: 4096,
             timeout: 30)
         guard result.succeeded else { return nil }
@@ -87,7 +91,7 @@ final class ExitNodeController {
     }
 
     /// Reads Tailscale's view only. `.on(server: "")` means our node is selected; the server comes from OCI.
-    static func parse(_ data: Data) -> ExitNodeState {
+    static func parse(_ data: Data, nodeIP: String) -> ExitNodeState {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             return .unavailable("unreadable tailscale status")
         }

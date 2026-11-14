@@ -23,8 +23,8 @@ Clicking the Dock icon opens the Overview:
 - **Hotspot Proxy** status in the Network card when the hotspot-proxy Mac watcher (`mac/hotspot-tun.sh`, which writes `/var/run/hotspot-tun.json`) is installed: green while traffic goes through the iPhone, amber when the Mac is on the hotspot but staying direct, red when the watcher has stopped. Hidden on Macs without the watcher
 - **Top CPU** and **Top Memory** bars, each with its PID and working directory
 - **Sleep** status: whether Keep Awake is on and which apps are holding off sleep, grouped per app
-- **Menu bar button** (gauge icon) opens the dashboard; right click it for **Keep Awake + Join MyPhone Hotspot**, which turns Keep Awake on and joins the `MyPhone` Wi-Fi in one click (the hotspot-proxy watcher then routes traffic through the iPhone)
-- **Surfshark exit node**: the `Surfshark` dropdown in the dashboard header (next to Keep Awake) and the Dock menu `Surfshark` submenu pick Off, Korea, Japan, Singapore, US (LA), or UK (London). Picking a country runs `surfshark-switch <server>` on OCI through the forced-command key `~/.ssh/dockawake_surfshark`, then `tailscale set --exit-node=100.64.0.1`; Off only clears the exit node. The country is shared by every device using the exit node; tailnet traffic stays direct. Setup: `the exit node setup`
+- **Menu bar button** (gauge icon) opens the dashboard; right click it for **Keep Awake + Join <SSID> Hotspot**, which turns Keep Awake on and joins your iPhone hotspot Wi-Fi in one click (the hotspot-proxy watcher then routes traffic through the iPhone)
+- **Surfshark exit node**: the `Surfshark` dropdown in the dashboard header (next to Keep Awake) and the Dock menu `Surfshark` submenu pick Off, Korea, Japan, Singapore, US (LA), or UK (London). Picking a country runs `surfshark-switch <server>` on OCI through the forced-command key `~/.ssh/dockawake_surfshark`, then `tailscale set --exit-node=<exitNodeIP>`; Off only clears the exit node. The country is shared by every device using the exit node; tailnet traffic stays direct. Both features read `~/.config/dockawake/config.json` (`{"exitNodeIP": "100.x.y.z", "hotspotSSID": "MyPhone"}`); a missing key hides or disables that feature
 - **Containers** and **Launch Agents** summaries (running, loaded, failed) that jump to the full tables
 
 ### Every process, named by what it runs
@@ -116,7 +116,7 @@ sudo -n /Library/PrivilegedHelperTools/dockawake-pmset on    # pmset -a disables
 sudo -n /Library/PrivilegedHelperTools/dockawake-pmset off   # pmset -a disablesleep 0
 ```
 
-The Surfshark control runs two commands as you, never as root: `/usr/local/bin/tailscale status|set --exit-node=...`, and `ssh` with the key `~/.ssh/dockawake_surfshark` to `ubuntu@100.64.0.1`. That key is `restrict` with a forced command on OCI, so it can only run `surfshark-switch` with one of `status`, `kr-seo`, `jp-tok`, `sg-sng`, `us-lax`, `uk-lon`; anything else is rejected.
+The Surfshark control runs two commands as you, never as root: `/usr/local/bin/tailscale status|set --exit-node=...`, and `ssh` with the key `~/.ssh/dockawake_surfshark` to `ubuntu@<exitNodeIP>`. That key is `restrict` with a forced command on OCI, so it can only run `surfshark-switch` with one of `status`, `kr-seo`, `jp-tok`, `sg-sng`, `us-lax`, `uk-lon`; anything else is rejected.
 
 The sudoers rule is limited to those two exact commands. DockAwake reads the actual tri-state `SleepDisabled` value after every change, checks it again after 10 seconds when needed, and never reports an unreadable value as disabled. Shutdown rejects new writes and orders a final `off` after any running helper call.
 

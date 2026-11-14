@@ -18,7 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var detailGeneration: UInt64 = 0
     private var escapeMonitor: Any?
     private var signalSources: [DispatchSourceSignal] = []
-    private let exitNode = ExitNodeController()
+    private let localConfig = LocalConfig.load()
+    private lazy var exitNode = ExitNodeController(nodeIP: localConfig.exitNodeIP)
     private var exitNodeState: ExitNodeState = .unavailable("checking") {
         didSet { dashboard.updateSurfshark(exitNodeState, applying: exitNodeApplying) }
     }
@@ -45,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.67percent", accessibilityDescription: "Open DockAwake dashboard")
         item.button?.image?.isTemplate = true
-        item.button?.toolTip = "Open DockAwake dashboard (right click: Keep Awake + MyPhone hotspot)"
+        item.button?.toolTip = "Open DockAwake dashboard (right click: Keep Awake + hotspot)"
         item.button?.target = self
         item.button?.action = #selector(statusItemClicked)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -59,9 +60,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         let menu = NSMenu()
-        let go = NSMenuItem(title: "Keep Awake + Join MyPhone Hotspot", action: #selector(awakeAndJoinHotspot), keyEquivalent: "")
-        go.target = self
-        menu.addItem(go)
+        if let ssid = localConfig.hotspotSSID {
+            let go = NSMenuItem(title: "Keep Awake + Join \(ssid) Hotspot", action: #selector(awakeAndJoinHotspot), keyEquivalent: "")
+            go.target = self
+            menu.addItem(go)
+        }
         let open = NSMenuItem(title: "Open Dashboard", action: #selector(openDashboard), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
@@ -69,15 +72,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
     }
 
-    static let hotspotSSID = "MyPhone"
-
     /// Turns Keep Awake on and joins the iPhone hotspot; the hotspot-proxy watcher takes it from there.
     @objc private func awakeAndJoinHotspot() {
+        guard let ssid = localConfig.hotspotSSID else { return }
         keepAwakeController?.setDesired(true)
         DispatchQueue.global(qos: .userInitiated).async {
             let result = CommandRunner().run(
                 executable: "/usr/sbin/networksetup",
-                arguments: ["-setairportnetwork", "en0", Self.hotspotSSID],
+                arguments: ["-setairportnetwork", "en0", ssid],
                 outputLimit: 4096,
                 timeout: 30)
             let message = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -85,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard !result.succeeded || !message.isEmpty else { return }
             DispatchQueue.main.async {
                 let alert = NSAlert()
-                alert.messageText = "Could not join \(Self.hotspotSSID)"
+                alert.messageText = "Could not join \(ssid)"
                 alert.informativeText = message.isEmpty ? "networksetup failed" : message
                 alert.runModal()
             }

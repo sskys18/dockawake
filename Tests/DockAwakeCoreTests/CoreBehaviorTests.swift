@@ -730,11 +730,11 @@ final class CoreBehaviorTests: XCTestCase {
         let other = #""b":{"HostName":"home","TailscaleIPs":["100.1.2.3"],"ExitNode":true}"#
         let idle = #""a":{"HostName":"exit-node","TailscaleIPs":["100.64.0.1"],"ExitNode":false}"#
 
-        XCTAssertEqual(ExitNodeController.parse(status("Running", oci)), .on(server: ""))
-        XCTAssertEqual(ExitNodeController.parse(status("Running", other)), .other("home"))
-        XCTAssertEqual(ExitNodeController.parse(status("Running", idle)), .off)
-        XCTAssertEqual(ExitNodeController.parse(status("Stopped", oci)), .unavailable("Tailscale Stopped"))
-        XCTAssertEqual(ExitNodeController.parse(Data("nope".utf8)), .unavailable("unreadable tailscale status"))
+        XCTAssertEqual(ExitNodeController.parse(status("Running", oci), nodeIP: "100.64.0.1"), .on(server: ""))
+        XCTAssertEqual(ExitNodeController.parse(status("Running", other), nodeIP: "100.64.0.1"), .other("home"))
+        XCTAssertEqual(ExitNodeController.parse(status("Running", idle), nodeIP: "100.64.0.1"), .off)
+        XCTAssertEqual(ExitNodeController.parse(status("Stopped", oci), nodeIP: "100.64.0.1"), .unavailable("Tailscale Stopped"))
+        XCTAssertEqual(ExitNodeController.parse(Data("nope".utf8), nodeIP: "100.64.0.1"), .unavailable("unreadable tailscale status"))
     }
 
     func testExitNodeSelectSwitchesOCIServerThenSelectsNodeAndReadsBackCountry() {
@@ -745,7 +745,7 @@ final class CoreBehaviorTests: XCTestCase {
         let runner = RecordingRunner(results: [ok("sg-sng\n"), ok(""), ok(selected), ok("sg-sng\n")])
         let done = expectation(description: "selected")
         var final: ExitNodeState?
-        ExitNodeController(runner: runner).select(server: "sg-sng") { final = $0; done.fulfill() }
+        ExitNodeController(nodeIP: "100.64.0.1", runner: runner).select(server: "sg-sng") { final = $0; done.fulfill() }
         wait(for: [done], timeout: 2)
 
         XCTAssertEqual(final, .on(server: "sg-sng"))
@@ -760,7 +760,7 @@ final class CoreBehaviorTests: XCTestCase {
         let runner = RecordingRunner(results: [failed])
         let done = expectation(description: "failed")
         var final: ExitNodeState?
-        ExitNodeController(runner: runner).select(server: "us-lax") { final = $0; done.fulfill() }
+        ExitNodeController(nodeIP: "100.64.0.1", runner: runner).select(server: "us-lax") { final = $0; done.fulfill() }
         wait(for: [done], timeout: 2)
 
         XCTAssertEqual(final, .unavailable("switch to us-lax failed"))
@@ -772,7 +772,7 @@ final class CoreBehaviorTests: XCTestCase {
         let runner = RecordingRunner(results: [ok, ok])
         let done = expectation(description: "off")
         var final: ExitNodeState?
-        ExitNodeController(runner: runner).select(server: nil) { final = $0; done.fulfill() }
+        ExitNodeController(nodeIP: "100.64.0.1", runner: runner).select(server: nil) { final = $0; done.fulfill() }
         wait(for: [done], timeout: 2)
 
         XCTAssertEqual(final, .off)
