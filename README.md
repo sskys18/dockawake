@@ -23,7 +23,7 @@ Clicking the Dock icon opens the Overview:
 - **Hotspot Proxy** status in the Network card when the hotspot-proxy Mac watcher (`mac/hotspot-tun.sh`, which writes `/var/run/hotspot-tun.json`) is installed: green while traffic goes through the iPhone, amber when the Mac is on the hotspot but staying direct, red when the watcher has stopped. Hidden on Macs without the watcher
 - **Top CPU** and **Top Memory** bars, each with its PID and working directory
 - **Sleep** status: whether Keep Awake is on and which apps are holding off sleep, grouped per app
-- **Menu bar button** (gauge icon) opens the dashboard
+- **Menu bar button** (gauge icon) opens the dashboard; right click it for **Keep Awake + Join MyPhone Hotspot**, which turns Keep Awake on and joins the `MyPhone` Wi-Fi in one click (the hotspot-proxy watcher then routes traffic through the iPhone)
 - **Surfshark exit node**: the `Surfshark` dropdown in the dashboard header (next to Keep Awake) and the Dock menu `Surfshark` submenu pick Off, Korea, Japan, Singapore, US (LA), or UK (London). Picking a country runs `surfshark-switch <server>` on OCI through the forced-command key `~/.ssh/dockawake_surfshark`, then `tailscale set --exit-node=100.64.0.1`; Off only clears the exit node. The country is shared by every device using the exit node; tailnet traffic stays direct. Setup: `the exit node setup`
 - **Containers** and **Launch Agents** summaries (running, loaded, failed) that jump to the full tables
 

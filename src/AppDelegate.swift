@@ -40,15 +40,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshExitNodeState()
     }
 
-    /// Menu bar button that opens the dashboard.
+    /// Menu bar button: left click opens the dashboard, right click offers the one-click hotspot setup.
     private func installDashboardStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.67percent", accessibilityDescription: "Open DockAwake dashboard")
         item.button?.image?.isTemplate = true
-        item.button?.toolTip = "Open DockAwake dashboard"
+        item.button?.toolTip = "Open DockAwake dashboard (right click: Keep Awake + MyPhone hotspot)"
         item.button?.target = self
-        item.button?.action = #selector(openDashboard)
+        item.button?.action = #selector(statusItemClicked)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         dashboardStatusItem = item
+    }
+
+    @objc private func statusItemClicked() {
+        guard let event = NSApp.currentEvent,
+              event.type == .rightMouseUp || event.modifierFlags.contains(.control) else {
+            openDashboard()
+            return
+        }
+        let menu = NSMenu()
+        let go = NSMenuItem(title: "Keep Awake + Join MyPhone Hotspot", action: #selector(awakeAndJoinHotspot), keyEquivalent: "")
+        go.target = self
+        menu.addItem(go)
+        let open = NSMenuItem(title: "Open Dashboard", action: #selector(openDashboard), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+        guard let button = dashboardStatusItem?.button else { return }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
+    }
+
+    static let hotspotSSID = "MyPhone"
+
+    /// Turns Keep Awake on and joins the iPhone hotspot; the hotspot-proxy watcher takes it from there.
+    @objc private func awakeAndJoinHotspot() {
+        keepAwakeController?.setDesired(true)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = CommandRunner().run(
+                executable: "/usr/sbin/networksetup",
+                arguments: ["-setairportnetwork", "en0", Self.hotspotSSID],
+                outputLimit: 4096,
+                timeout: 30)
+            let message = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            // networksetup exits 0 even on failure and reports errors on stdout.
+            guard !result.succeeded || !message.isEmpty else { return }
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Could not join \(Self.hotspotSSID)"
+                alert.informativeText = message.isEmpty ? "networksetup failed" : message
+                alert.runModal()
+            }
+        }
     }
 
     /// The Dock menu is built synchronously, so it shows the last read state and starts a fresh read.
