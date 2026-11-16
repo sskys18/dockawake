@@ -27,6 +27,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         didSet { dashboard.updateSurfshark(exitNodeState, applying: exitNodeApplying) }
     }
     private var dashboardStatusItem: NSStatusItem?
+    private lazy var hotspot = HotspotController(ssid: localConfig.hotspotSSID)
+    private var hotspotState: HotspotState = .unavailable("checking") {
+        didSet { updateDashboardHotspot() }
+    }
+    private var hotspotApplying = false {
+        didSet { updateDashboardHotspot() }
+    }
+
+    private func updateDashboardHotspot() {
+        dashboard.updateHotspot(hotspotState, applying: hotspotApplying)
+        let busy = hotspotApplying || keepAwakeState?.pendingIntent != nil
+        var available = true
+        if case .unavailable = hotspotState { available = false }
+        dashboard.updateMobile(on: mobileOn, enabled: available && !busy)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.dockTile.contentView = dockTile
@@ -39,14 +54,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         keepAwakeController?.adoptCurrentState()
         installDashboardStatusItem()
         refreshExitNodeState()
+        refreshHotspotState()
     }
 
-    /// Menu bar button: left click opens the dashboard, right click offers the one-click hotspot setup.
+    /// Menu bar button: left click opens the dashboard, right click shows the same controls as the Dock menu.
     private func installDashboardStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.67percent", accessibilityDescription: "Open DockAwake dashboard")
         item.button?.image?.isTemplate = true
-        item.button?.toolTip = "Open DockAwake dashboard (right click: Keep Awake + hotspot)"
+        item.button?.toolTip = "Open DockAwake dashboard (right click: Keep Awake, hotspot, Surfshark)"
         item.button?.target = self
         item.button?.action = #selector(statusItemClicked)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -60,38 +76,122 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         let menu = NSMenu()
-        if let ssid = localConfig.hotspotSSID {
-            let go = NSMenuItem(title: "Keep Awake + Join \(ssid) Hotspot", action: #selector(awakeAndJoinHotspot), keyEquivalent: "")
-            go.target = self
-            menu.addItem(go)
-        }
         let open = NSMenuItem(title: "Open Dashboard", action: #selector(openDashboard), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
+        menu.addItem(.separator())
+        controlMenuItems().forEach(menu.addItem)
         guard let button = dashboardStatusItem?.button else { return }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
     }
 
-    /// Turns Keep Awake on and joins the iPhone hotspot; the hotspot-proxy watcher takes it from there.
-    @objc private func awakeAndJoinHotspot() {
-        guard let ssid = localConfig.hotspotSSID else { return }
-        keepAwakeController?.setDesired(true)
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = CommandRunner().run(
-                executable: "/usr/sbin/networksetup",
-                arguments: ["-setairportnetwork", "en0", ssid],
-                outputLimit: 4096,
-                timeout: 30)
-            let message = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            // networksetup exits 0 even on failure and reports errors on stdout.
-            guard !result.succeeded || !message.isEmpty else { return }
-            DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "Could not join \(ssid)"
-                alert.informativeText = message.isEmpty ? "networksetup failed" : message
-                alert.runModal()
+    /// The controls shared by the menu bar and Dock menus, so both always offer the same thing.
+    /// Menus are built synchronously, so they show the last read state and start a fresh read.
+    private func controlMenuItems() -> [NSMenuItem] {
+        refreshExitNodeState()
+        refreshHotspotState()
+        return [mobileMenuItem(), .separator(), keepAwakeMenuItem(), hotspotMenuItem(), exitNodeMenuItem()]
+    }
+
+    /// Both Keep Awake and the hotspot on, the setup for working off the phone.
+    private var mobileOn: Bool {
+        hotspotState == .on && keepAwakeState?.current == .available(true)
+    }
+
+    private func mobileMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Hotspot + Keep Awake", action: #selector(toggleMobile), keyEquivalent: "")
+        item.target = self
+        item.state = mobileOn ? .on : .off
+        if hotspotApplying || keepAwakeState?.pendingIntent != nil {
+            item.title = "Hotspot + Keep Awake: Applying…"
+            item.action = nil
+        }
+        if case .unavailable = hotspotState { item.action = nil }
+        return item
+    }
+
+    @objc private func toggleMobile() {
+        setMobile(!mobileOn)
+    }
+
+    /// One switch for both: on turns the hotspot on (which turns Keep Awake on), off turns both off.
+    private func setMobile(_ desired: Bool) {
+        if !desired { keepAwakeController?.setDesired(false) }
+        if (hotspotState == .on) != desired { setHotspot(desired) } else if desired { keepAwakeController?.setDesired(true) }
+    }
+
+    private func keepAwakeMenuItem() -> NSMenuItem {
+        let awake = NSMenuItem(title: "Keep Awake", action: #selector(toggleKeepAwake), keyEquivalent: "")
+        awake.target = self
+        switch keepAwakeState?.current {
+        case .available(true): awake.state = .on
+        case .available(false): awake.state = .off
+        case .unavailable, .unknown, .none:
+            awake.title = "Keep Awake: Unavailable"
+            awake.action = nil
+        }
+        if keepAwakeState?.pendingIntent != nil {
+            awake.title = "Keep Awake: Applying…"
+            awake.action = nil
+        }
+        return awake
+    }
+
+    private func hotspotMenuItem() -> NSMenuItem {
+        let name = hotspot.ssid.map { "\($0) Hotspot" } ?? "Hotspot"
+        let item = NSMenuItem(title: name, action: #selector(toggleHotspot), keyEquivalent: "")
+        item.target = self
+        if hotspotApplying {
+            item.title = "\(name): Applying…"
+            item.action = nil
+            return item
+        }
+        switch hotspotState {
+        case .on: item.state = .on
+        case .off: item.state = .off
+        case let .unavailable(reason):
+            item.title = "\(name): \(reason)"
+            item.action = nil
+        }
+        return item
+    }
+
+    @objc private func toggleHotspot() {
+        setHotspot(hotspotState != .on)
+    }
+
+    /// Turning the hotspot on also turns Keep Awake on; the hotspot-proxy watcher takes it from there.
+    private func setHotspot(_ desired: Bool) {
+        guard !hotspotApplying else { return }
+        if case .unavailable = hotspotState { return }
+        hotspotApplying = true
+        if desired { keepAwakeController?.setDesired(true) }
+        let done: (String?) -> Void = { [weak self] message in
+            guard let self else { return }
+            if let message { self.showHotspotFailure(desired, message) }
+            // Wi-Fi takes a moment to drop or gain the hotspot address after the call returns.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                self.hotspotApplying = false
+                self.refreshHotspotState()
             }
         }
+        if desired { hotspot.turnOn(completion: done) } else { hotspot.turnOff(completion: done) }
+    }
+
+    private func refreshHotspotState() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let state = self.hotspot.currentState()
+            DispatchQueue.main.async { self.hotspotState = state }
+        }
+    }
+
+    private func showHotspotFailure(_ joining: Bool, _ message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = joining ? "Could not join \(hotspot.ssid ?? "the hotspot")" : "Could not leave the hotspot"
+        alert.informativeText = message
+        alert.runModal()
     }
 
     /// The Dock menu is built synchronously, so it shows the last read state and starts a fresh read.
@@ -137,6 +237,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dashboard.onSurfsharkChange = { [weak self] desired in
             self?.setExitNode(desired)
         }
+        dashboard.onHotspotChange = { [weak self] desired in
+            self?.setHotspot(desired)
+        }
+        dashboard.onMobileChange = { [weak self] desired in
+            self?.setMobile(desired)
+        }
         dashboard.onContainerStop = { [weak self] containerIDs, completion in
             guard let self else { return }
             // Stops run one after another on a single queue: the runtime serializes
@@ -167,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let self else { return }
                 self.dashboard.updateKeepAwake(state)
                 self.keepAwakeState = state
+                self.updateDashboardHotspot()
                 self.dockTile.keepAwake = state.current.value == true
             })
     }
@@ -183,6 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func openDashboard() {
         refreshExitNodeState()
+        refreshHotspotState()
         if !window.isVisible || window.isMiniaturized {
             if detailSession == nil { startDetailSession() }
             window.deminiaturize(nil)
@@ -229,22 +337,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             menu.addItem(.separator())
         }
-        let awake = NSMenuItem(title: "Keep Awake", action: #selector(toggleKeepAwake), keyEquivalent: "")
-        awake.target = self
-        switch keepAwakeState?.current {
-        case .available(true): awake.state = .on
-        case .available(false): awake.state = .off
-        case .unavailable, .unknown, .none:
-            awake.title = "Keep Awake: Unavailable"
-            awake.action = nil
-        }
-        if keepAwakeState?.pendingIntent != nil {
-            awake.title = "Keep Awake: Applying…"
-            awake.action = nil
-        }
-        menu.addItem(awake)
-        menu.addItem(exitNodeMenuItem())
-        refreshExitNodeState()
+        controlMenuItems().forEach(menu.addItem)
         menu.addItem(.separator())
         let login = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         login.target = self

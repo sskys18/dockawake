@@ -24,7 +24,9 @@ let package = Package(
                 "DashboardModels.swift",
                 "DetailCollectionSession.swift",
                 "ExitNodeController.swift",
+                "HotspotController.swift",
                 "HotspotProxyCollector.swift",
+                "InstantHotspot.swift",
                 "KeepAwakeController.swift",
                 "LaunchAgentCollector.swift",
                 "NetworkCollector.swift",
@@ -37,7 +39,8 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("Cocoa"),
-                .linkedFramework("IOKit")
+                .linkedFramework("IOKit"),
+                .linkedFramework("CoreWLAN")
             ]
         ),
         .testTarget(

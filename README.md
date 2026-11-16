@@ -23,7 +23,8 @@ Clicking the Dock icon opens the Overview:
 - **Hotspot Proxy** status in the Network card when the hotspot-proxy Mac watcher (`mac/hotspot-tun.sh`, which writes `/var/run/hotspot-tun.json`) is installed: green while traffic goes through the iPhone, amber when the Mac is on the hotspot but staying direct, red when the watcher has stopped. Hidden on Macs without the watcher
 - **Top CPU** and **Top Memory** bars, each with its PID and working directory
 - **Sleep** status: whether Keep Awake is on and which apps are holding off sleep, grouped per app
-- **Menu bar button** (gauge icon) opens the dashboard; right click it for **Keep Awake + Join <SSID> Hotspot**, which turns Keep Awake on and joins your iPhone hotspot Wi-Fi in one click (the hotspot-proxy watcher then routes traffic through the iPhone)
+- **Menu bar button** (gauge icon) opens the dashboard; right click it for the same controls as the Dock menu
+- **iPhone hotspot**: **Hotspot + Keep Awake** (top of both menus, and a toggle button in the dashboard header) turns both on in one click and both off on the next. **<SSID> Hotspot** in the menus and the `Hotspot` switch in the header toggle the hotspot alone. Turning it on wakes the iPhone over Bluetooth (Instant Hotspot, through the private `SFRemoteHotspotSession` API, so the phone must share your Apple ID) and joins its Wi-Fi with the password the phone returns; turning it off disconnects Wi-Fi. The hotspot-proxy watcher then routes traffic through the iPhone
 - **Surfshark exit node**: the `Surfshark` dropdown in the dashboard header (next to Keep Awake) and the Dock menu `Surfshark` submenu pick Off, Korea, Japan, Singapore, US (LA), or UK (London). Picking a country runs `surfshark-switch <server>` on OCI through the forced-command key `~/.ssh/dockawake_surfshark`, then `tailscale set --exit-node=<exitNodeIP>`; Off only clears the exit node. The country is shared by every device using the exit node; tailnet traffic stays direct. Both features read `~/.config/dockawake/config.json` (`{"exitNodeIP": "100.x.y.z", "hotspotSSID": "MyPhone"}`); a missing key hides or disables that feature
 - **Containers** and **Launch Agents** summaries (running, loaded, failed) that jump to the full tables
 
@@ -93,7 +94,7 @@ Evidence limitation: this path is verified against fixture bundles and negative 
 - **Sections**: switch between Overview, Processes, Containers, and Launch Agents with the control at the top. The links on the Overview cards jump straight to a section
 - **Keep Awake**: the switch at the top right, visible in every section
 - **Surfshark**: the country dropdown left of Keep Awake. Pick a country to route this Mac's internet traffic through it; pick Off for your normal connection. The label shows `On` in green when active. Keep the Surfshark app on the Mac disconnected: the tunnel runs on OCI
-- **Right-click the Dock icon** for Open Dashboard, the current readings, a Keep Awake toggle, the Surfshark submenu, and Start at Login
+- **Right-click the Dock icon** for Open Dashboard, the current readings, Hotspot + Keep Awake, Keep Awake, the hotspot toggle, the Surfshark submenu, and Start at Login
 - **Quit** waits for the final helper `off` call and restores normal sleep
 
 When keeping the Mac awake with the lid closed, use a stable power source and make sure it has airflow. Closed-lid operation increases heat and battery drain.

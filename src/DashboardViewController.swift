@@ -145,11 +145,16 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
     var onAwakeChange: ((Bool) -> Void)?
     /// nil = off, otherwise a SurfsharkServer id.
     var onSurfsharkChange: ((String?) -> Void)?
+    var onHotspotChange: ((Bool) -> Void)?
+    var onMobileChange: ((Bool) -> Void)?
     /// Asks the owner to stop the given containers and report, per container ID,
     /// whether it succeeded. The controller never runs commands itself.
     var onContainerStop: (([String], @escaping ([String: Bool]) -> Void) -> Void)?
 
     private let awakeSwitch = NSSwitch()
+    private let hotspotSwitch = NSSwitch()
+    private let mobileButton = NSButton(title: "Hotspot + Keep Awake", target: nil, action: nil)
+    private let hotspotStateLabel = NSTextField(labelWithString: "Checking")
     private let surfsharkPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let surfsharkStateLabel = NSTextField(labelWithString: "Checking")
     private let awakeStateLabel = NSTextField(labelWithString: "Unknown")
@@ -250,7 +255,32 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
         sectionControl.action = #selector(sectionChanged)
         sectionControl.setAccessibilityLabel("Dashboard sections")
 
-        let header = NSStackView(views: [sectionControl, NSView(), surfsharkRow, awakeRow])
+        hotspotSwitch.target = self
+        hotspotSwitch.action = #selector(hotspotSwitchChanged)
+        hotspotSwitch.setAccessibilityLabel("iPhone hotspot")
+        hotspotSwitch.toolTip = "Wakes the iPhone's Personal Hotspot over Bluetooth and joins it. Turning it on also turns Keep Awake on."
+        hotspotSwitch.isEnabled = false
+        hotspotStateLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        hotspotStateLabel.textColor = .secondaryLabelColor
+        let hotspotIcon = NSImageView(image: NSImage(systemSymbolName: "personalhotspot", accessibilityDescription: nil) ?? NSImage())
+        hotspotIcon.contentTintColor = .systemGreen
+        let hotspotTitle = NSTextField(labelWithString: "Hotspot")
+        hotspotTitle.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        let hotspotRow = NSStackView(views: [hotspotStateLabel, hotspotIcon, hotspotTitle, hotspotSwitch])
+        hotspotRow.orientation = .horizontal
+        hotspotRow.alignment = .centerY
+        hotspotRow.spacing = 8
+
+        mobileButton.setButtonType(.pushOnPushOff)
+        mobileButton.bezelStyle = .rounded
+        mobileButton.image = NSImage(systemSymbolName: "personalhotspot", accessibilityDescription: nil)
+        mobileButton.imagePosition = .imageLeading
+        mobileButton.target = self
+        mobileButton.action = #selector(mobileButtonClicked)
+        mobileButton.toolTip = "One click for both: joins the iPhone hotspot and turns Keep Awake on. Click again to turn both off."
+        mobileButton.isEnabled = false
+
+        let header = NSStackView(views: [sectionControl, NSView(), mobileButton, hotspotRow, surfsharkRow, awakeRow])
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = 12
@@ -495,6 +525,41 @@ final class DashboardViewController: NSViewController, NSTableViewDataSource, NS
 
     @objc private func awakeSwitchChanged() {
         onAwakeChange?(awakeSwitch.state == .on)
+    }
+
+    @objc private func mobileButtonClicked() {
+        mobileButton.isEnabled = false
+        onMobileChange?(mobileButton.state == .on)
+    }
+
+    func updateMobile(on: Bool, enabled: Bool) {
+        precondition(Thread.isMainThread)
+        mobileButton.state = on ? .on : .off
+        mobileButton.isEnabled = enabled
+    }
+
+    @objc private func hotspotSwitchChanged() {
+        hotspotSwitch.isEnabled = false
+        hotspotStateLabel.stringValue = "Applying…"
+        hotspotStateLabel.textColor = .secondaryLabelColor
+        onHotspotChange?(hotspotSwitch.state == .on)
+    }
+
+    func updateHotspot(_ state: HotspotState, applying: Bool) {
+        precondition(Thread.isMainThread)
+        switch state {
+        case .on:
+            hotspotSwitch.state = .on
+            hotspotStateLabel.stringValue = "On"; hotspotStateLabel.textColor = .systemGreen
+        case .off:
+            hotspotSwitch.state = .off
+            hotspotStateLabel.stringValue = ""; hotspotStateLabel.textColor = .secondaryLabelColor
+        case let .unavailable(reason):
+            hotspotSwitch.state = .off
+            hotspotStateLabel.stringValue = reason; hotspotStateLabel.textColor = .systemOrange
+        }
+        if case .unavailable = state { hotspotSwitch.isEnabled = false } else { hotspotSwitch.isEnabled = !applying }
+        if applying { hotspotStateLabel.stringValue = "Applying…"; hotspotStateLabel.textColor = .secondaryLabelColor }
     }
 
     @objc private func surfsharkPopupChanged() {

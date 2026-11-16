@@ -722,6 +722,14 @@ final class CoreBehaviorTests: XCTestCase {
         XCTAssertFalse(collector.stop(containerID: "aaa111"))
     }
 
+    func testHotspotParseRecognisesIPhoneHotspotAddressesOnly() {
+        XCTAssertEqual(HotspotController.parse("en0: flags=8863<UP>\n\tinet 172.20.10.3 netmask 0xfffffff0\n"), .on)
+        XCTAssertEqual(HotspotController.parse("\tinet 192.0.0.2 netmask 0xffffffff broadcast 192.0.0.2\n"), .on)
+        XCTAssertEqual(HotspotController.parse("\tinet 192.168.1.48 netmask 0xffffff00\n"), .off)
+        XCTAssertEqual(HotspotController.parse("\tinet 192.0.0.20 netmask 0xffffffff\n"), .off)
+        XCTAssertEqual(HotspotController.parse("en0: flags=8863<UP>\n"), .off)
+    }
+
     func testExitNodeParseReportsSurfsharkNodeOtherNodeOffAndStopped() {
         func status(_ backend: String, _ peers: String) -> Data {
             Data(#"{"BackendState":"\#(backend)","Peer":{\#(peers)}}"#.utf8)
