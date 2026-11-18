@@ -30,7 +30,7 @@ struct SurfsharkServer: Equatable {
 }
 
 final class ExitNodeController {
-    static let tailscalePath = "/usr/local/bin/tailscale"
+    static let tailscalePath = "/opt/homebrew/bin/tailscale"
     static let sshPath = "/usr/bin/ssh"
     static let switchKey = NSHomeDirectory() + "/.ssh/dockawake_surfshark"
 

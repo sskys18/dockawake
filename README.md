@@ -117,7 +117,7 @@ sudo -n /Library/PrivilegedHelperTools/dockawake-pmset on    # pmset -a disables
 sudo -n /Library/PrivilegedHelperTools/dockawake-pmset off   # pmset -a disablesleep 0
 ```
 
-The Surfshark control runs two commands as you, never as root: `/usr/local/bin/tailscale status|set --exit-node=...`, and `ssh` with the key `~/.ssh/dockawake_surfshark` to `ubuntu@<exitNodeIP>`. That key is `restrict` with a forced command on OCI, so it can only run `surfshark-switch` with one of `status`, `kr-seo`, `jp-tok`, `sg-sng`, `us-lax`, `uk-lon`; anything else is rejected.
+The Surfshark control runs two commands as you, never as root: `/opt/homebrew/bin/tailscale status|set --exit-node=...`, and `ssh` with the key `~/.ssh/dockawake_surfshark` to `ubuntu@<exitNodeIP>`. That key is `restrict` with a forced command on OCI, so it can only run `surfshark-switch` with one of `status`, `kr-seo`, `jp-tok`, `sg-sng`, `us-lax`, `uk-lon`; anything else is rejected.
 
 The sudoers rule is limited to those two exact commands. DockAwake reads the actual tri-state `SleepDisabled` value after every change, checks it again after 10 seconds when needed, and never reports an unreadable value as disabled. Shutdown rejects new writes and orders a final `off` after any running helper call.
 

@@ -757,7 +757,7 @@ final class CoreBehaviorTests: XCTestCase {
         wait(for: [done], timeout: 2)
 
         XCTAssertEqual(final, .on(server: "sg-sng"))
-        XCTAssertEqual(runner.calls.map(\.executable), ["/usr/bin/ssh", "/usr/local/bin/tailscale", "/usr/local/bin/tailscale", "/usr/bin/ssh"])
+        XCTAssertEqual(runner.calls.map(\.executable), ["/usr/bin/ssh", "/opt/homebrew/bin/tailscale", "/opt/homebrew/bin/tailscale", "/usr/bin/ssh"])
         XCTAssertEqual(runner.calls[0].arguments.last, "sg-sng")
         XCTAssertEqual(runner.calls[1].arguments, ["set", "--exit-node=100.64.0.1"])
         XCTAssertEqual(runner.calls[3].arguments.last, "status")
