@@ -17,7 +17,7 @@ clang -O2 -Wall -Wextra -target arm64-apple-macosx13.0 -o "$BUILD/runcat-safe-re
 
 echo "==> Compiling app"
 swift_sources=("$ROOT"/src/*.swift)
-swiftc -O -target arm64-apple-macosx13.0 -framework Cocoa -framework IOKit -framework SystemConfiguration -framework CoreWLAN -o "$APP/Contents/MacOS/DockAwake" "${swift_sources[@]}"
+swiftc -O -target arm64-apple-macosx13.0 -framework Cocoa -framework IOKit -framework SystemConfiguration -framework CoreWLAN -framework Network -o "$APP/Contents/MacOS/DockAwake" "${swift_sources[@]}"
 
 cp "$ROOT/src/Info.plist" "$APP/Contents/Info.plist"
 

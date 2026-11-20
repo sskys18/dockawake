@@ -1,4 +1,5 @@
 import AppKit
+import Network
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -27,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         didSet { dashboard.updateSurfshark(exitNodeState, applying: exitNodeApplying) }
     }
     private var dashboardStatusItem: NSStatusItem?
+    private var networkMonitor: NWPathMonitor?
     private lazy var hotspot = HotspotController(ssid: localConfig.hotspotSSID)
     private var hotspotState: HotspotState = .unavailable("checking") {
         didSet { updateDashboardHotspot() }
@@ -55,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installDashboardStatusItem()
         refreshExitNodeState()
         refreshHotspotState()
+        installNetworkWatcher()
     }
 
     /// Menu bar button: left click opens the dashboard, right click shows the same controls as the Dock menu.
@@ -182,8 +185,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let state = self.hotspot.currentState()
-            DispatchQueue.main.async { self.hotspotState = state }
+            DispatchQueue.main.async {
+                // A hotspot joined outside DockAwake (Wi-Fi menu, auto-join) gets Keep Awake too,
+                // the same as the in-app switch.
+                if self.hotspotState == .off, state == .on, !self.hotspotApplying {
+                    self.keepAwakeController?.setDesired(true)
+                }
+                self.hotspotState = state
+            }
         }
+    }
+
+    /// Re-reads the hotspot whenever the network path changes, so joins and leaves made outside
+    /// DockAwake show up without opening a menu. The address can lag the path change, so read twice.
+    private func installNetworkWatcher() {
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.refreshHotspotState()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self?.refreshHotspotState() }
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.dockawake.network", qos: .utility))
+        networkMonitor = monitor
     }
 
     private func showHotspotFailure(_ joining: Bool, _ message: String) {
